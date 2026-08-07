@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "smart-doc-tracker"
+version = "0.1.0"
+description = "Privacy-first local document tracking"
+requires-python = ">=3.11"
+dependencies = [
+    "Pillow>=10.0,<12.0",
+    "pytesseract>=0.3.10,<0.4",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
