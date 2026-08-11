@@ -2,20 +2,18 @@
 
 ## 1. Project Overview
 The goal is to build a "Privacy-First" local application that acts as a smart, comprehensive manager for personal documents (ID cards, insurance policies, contracts, invoices). 
-Operating 100% offline to guarantee absolute data privacy, the application automates the digitization process. It extracts text via OCR, uses a local LLM to understand and structure the data into dynamic JSON schemas, and stores everything in a local MongoDB database. While the initial core feature is automated expiration tracking, the system is designed to scale into a fully searchable document hub where users can categorize, query, and manage their paperwork.
+Operating 100% offline to guarantee absolute data privacy, the application automates the digitization process. It extracts text via OCR, uses a local LLM to understand and structure the data into dynamic JSON schemas using a **Hybrid Document Pattern (Base Envelope + Dynamic Payload)**, and stores everything in a local MongoDB database. While the initial core feature is automated expiration tracking, the system is designed to scale into a fully searchable document hub where users can categorize, query, and manage their paperwork regardless of the document type.
 
 ## 2. Tech Stack Architecture
 *   **Language:** Python 3.11+
 *   **OCR Module:** `pytesseract` (Tesseract) or `easyocr` (optimized for CPU processing).
 *   **LLM Engine:** `Ollama` running locally (target models: `qwen2.5:3b` or `llama3.2:3b`).
-*   **Data Validation:** `Pydantic` (to enforce structured JSON outputs from the LLM).
+*   **Data Validation:** `Pydantic` (to validate the Base Metadata envelope and dynamically capture document-specific fields).
 *   **Database:** `MongoDB` (running locally via Docker) managed with `pymongo`.
 *   **Notifications:** `plyer` or `win10toast` for native OS desktop notifications.
 *   **Scheduler:** `APScheduler` or built-in OS task scheduling.
 
 ## 3. Directory Structure
-To maintain a modular and clean architecture, the project must strictly follow this directory layout:
-
 ```text
 local-ai-doc-vault/
 ├── data/
@@ -24,7 +22,7 @@ local-ai-doc-vault/
 ├── src/                 # Main source code directory
 │   ├── core/            # Core business logic (e.g., OCR processing, LLM parsing)
 │   ├── infrastructure/  # External integrations (e.g., MongoDB, Notifications)
-│   ├── models/          # Data schemas and Pydantic models
+│   ├── models/          # Hybrid Pydantic schemas (Base Envelope + Dynamic Payload)
 │   └── main.py          # Entry point and pipeline orchestrator
 ├── tests/               # Unit and integration tests
 ├── docker-compose.yml   # Docker configuration for local MongoDB instance
@@ -40,34 +38,42 @@ local-ai-doc-vault/
 *   Integrate `pytesseract` to extract raw text from the image.
 *   Output the raw text to the console for verification.
 
-### Phase 2: AI Parsing & Structured Output
-*   Define a `Pydantic` schema for a generic document model (e.g., fields for `title`, `category`, `issue_date`, `expiry_date`, `document_number`, `summary`).
+### Phase 2: Hybrid AI Parsing & Dynamic Structured Output
+*   Define a **Hybrid `Pydantic` Schema** consisting of:
+    *   **Fixed Metadata Envelope:** Common required fields for system tasks (`document_type`, `summary`, `expiry_date`, `issue_date`).
+    *   **Dynamic Payload (`extracted_data: Dict[str, Any]`):** A flexible dictionary field that captures all unique, document-specific attributes extracted by the LLM (e.g., tax code for ID cards, patient name for medical certificates, line items for invoices).
 *   Implement the connection to the local `Ollama` instance.
-*   Develop the prompt logic to send the OCR raw text to the LLM, instructing it to understand the context and return a JSON response matching the Pydantic schema.
-*   Parse and validate the output into a Python dictionary.
+*   Develop system prompts instructing the LLM to extract standard metadata into the fixed envelope while dynamically populating all other specific findings inside the `extracted_data` dictionary.
+*   Parse, sanitize, and validate the LLM output into Python objects using Pydantic.
 
 ### Phase 3: Storage & Idempotency (MongoDB)
-*   Set up the `docker-compose.yml` to spin up a local MongoDB container.
+*   Set up `docker-compose.yml` to spin up a local MongoDB container.
 *   Initialize the `pymongo` client in `database.py` and connect to the local instance.
 *   Implement a hashing mechanism (e.g., SHA-256) for incoming files to ensure the same document is not processed multiple times.
-*   Create CRUD operations: `insert_document`, `get_document_by_id`, `get_all_documents`, and `get_expiring_documents(days_threshold)`.
+*   Create CRUD operations supporting both fixed envelope fields and dynamic sub-documents:
+    *   `insert_document` (saving both envelope and `extracted_data`).
+    *   `get_document_by_id`.
+    *   `get_all_documents`.
+    *   `get_expiring_documents(days_threshold)`.
+    *   `search_by_dynamic_field(field_key, field_value)` (querying inside `extracted_data.<key>`).
 
 ### Phase 4: Active Monitoring (Expiration Tracking)
-*   Develop a query function to retrieve documents expiring within a specific timeframe (e.g., 30 days) from MongoDB.
+*   Develop a query function to retrieve documents expiring within a specific timeframe (e.g., 30 days) from MongoDB via the standard `expiry_date` envelope field.
 *   Integrate a native notification library (`plyer`) to trigger OS-level desktop alerts for these items.
 *   Set up `APScheduler` to run the expiration check automatically on a daily basis.
 
 ### Phase 5: Pipeline Automation
 *   Establish the `data/inbox` directory structure.
 *   Implement a file system watcher (e.g., using `watchdog`) or a startup scanner that monitors the inbox folder.
-*   Connect the full pipeline: new file detected -> OCR -> LLM Understanding -> MongoDB Insertion -> Move file to `data/processed`.
+*   Connect the full pipeline: new file detected -> OCR -> Hybrid LLM Understanding -> MongoDB Insertion -> Move file to `data/processed`.
 
 ## 5. Known Edge Cases to Handle
-*   **LLM Hallucinations:** The LLM might misinterpret date formats (e.g., confusing O and 0, or mixing DD/MM/YYYY with MM/DD/YYYY). Strict Pydantic validators must be in place to sanitize and standardize date strings.
+*   **LLM Hallucinations & Unstructured Date Formats:** The LLM might return inconsistent dates inside both standard metadata and dynamic fields. Strict Pydantic validators/custom parsers must clean and convert dates to `datetime` objects before database insertion.
+*   **Inconsistent Dynamic Key Naming:** Different runs on similar documents might generate slightly different keys in `extracted_data` (e.g., `tax_code` vs `fiscal_code`). System prompts must enforce clear naming conventions (snake_case, English keys).
 *   **Hardware Constraints:** Processing large PDFs locally can lead to CPU throttling. The processing logic should handle files asynchronously or implement page-by-page extraction limits.
 *   **Data Hygiene:** Any temporary image files generated during PDF-to-image conversion must be deleted immediately after OCR extraction.
 
 ## 6. Future Extensions (Scaling the Vault)
-*   **Dynamic Schema Selection (Zero-Shot Classification):** Upgrade the LLM prompt to automatically classify the document type and dynamically select the most appropriate Pydantic schema based on the context.
-*   **RAG Implementation (Chat with your Documents):** Store the extracted text and summaries in a local Vector DB (like `ChromaDB`) to enable a conversational interface for querying document details (e.g., "What is the deductible on my car insurance?").
-*   **Local Web Dashboard:** Build a `Streamlit` or `FastAPI` interface to visualize the database, handle manual file uploads, display color-coded expiration warnings, and provide a search bar for the document vault.
+*   **Dynamic Schema Pre-selection:** Upgrade the LLM pipeline to use explicit sub-schemas for highly frequent document types (e.g., `IDCardSchema`, `InvoiceSchema`) extending the base envelope, falling back to `Dict[str, Any]` for unknown types.
+*   **RAG Implementation (Chat with your Documents):** Store the extracted text, summaries, and dynamic JSON values in a local Vector DB (like `ChromaDB`) to enable natural language queries across all document types.
+*   **Local Web Dashboard:** Build a `Streamlit` or `FastAPI` interface to visualize documents, query dynamic JSON attributes, handle file uploads, and display color-coded expiration alerts.
