@@ -47,6 +47,8 @@ local-ai-doc-vault/
 *   Parse, sanitize, and validate the LLM output into Python objects using Pydantic.
 
 ### Phase 3: Storage & Idempotency (MongoDB)
+**Status: Implemented.**
+
 *   Set up `docker-compose.yml` to spin up a local MongoDB container.
 *   Initialize the `pymongo` client in `database.py` and connect to the local instance.
 *   Implement a hashing mechanism (e.g., SHA-256) for incoming files to ensure the same document is not processed multiple times.

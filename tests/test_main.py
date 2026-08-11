@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime
 from io import StringIO
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import TestCase
 
 from core.ocr import OCRInputError
 from core.parser import DocumentParsingError
+from db.database import DocumentInsertResult, StoredDocument
 from models.document import DocumentData
 from main import run
 
@@ -39,6 +43,37 @@ class FailingParser:
             "The generated document data is not valid structured output.",
             generated_response="not valid JSON",
         )
+
+
+class FakeRepository:
+    def __init__(self, documents: list[StoredDocument] | None = None) -> None:
+        self.documents = list(documents or [])
+        self.insert_calls: list[tuple[DocumentData, str]] = []
+
+    def __enter__(self) -> FakeRepository:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        return None
+
+    def insert_document(
+        self, document: DocumentData, *, file_hash: str
+    ) -> DocumentInsertResult:
+        self.insert_calls.append((document, file_hash))
+        record = StoredDocument(
+            id="64b64b64b64b64b64b64b64b",
+            file_hash=file_hash,
+            document=document,
+            created_at=datetime(2026, 8, 11, 12, 0, tzinfo=UTC),
+        )
+        self.documents.append(record)
+        return DocumentInsertResult(record=record, inserted=True)
+
+    def get_all_documents(self) -> list[StoredDocument]:
+        return list(self.documents)
+
+    def get_document_by_id(self, document_id: str) -> StoredDocument | None:
+        return next((item for item in self.documents if item.id == document_id), None)
 
 
 class MainTests(TestCase):
@@ -131,3 +166,78 @@ class MainTests(TestCase):
         self.assertEqual(stdout.getvalue(), "")
         self.assertIn("Parsing failed:", stderr.getvalue())
         self.assertIn("Raw LLM response:\n---\nnot valid JSON\n---\n", stderr.getvalue())
+
+    def test_run_stores_structured_document_using_source_file_hash(self) -> None:
+        stdout = StringIO()
+        stderr = StringIO()
+        repository = FakeRepository()
+        document = DocumentData(
+            document_type="identity_card",
+            summary="A local identity card",
+            expiry_date="2030-01-01",
+            issue_date=None,
+            extracted_data={"document_number": "TEST-42"},
+        )
+
+        with TemporaryDirectory() as directory:
+            image_path = Path(directory) / "sample.jpeg"
+            image_path.write_bytes(b"offline image fixture")
+            exit_code = run(
+                [str(image_path), "--structured", "--store"],
+                ocr=FakeOCR("raw local text"),
+                document_parser=FakeParser(document),
+                repository_factory=lambda: repository,
+                stdout=stdout,
+                stderr=stderr,
+            )
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(payload["inserted"])
+        self.assertEqual(payload["id"], "64b64b64b64b64b64b64b64b")
+        self.assertEqual(payload["document"]["document_type"], "identity_card")
+        self.assertEqual(len(repository.insert_calls[0][1]), 64)
+        self.assertIn("MongoDB storage completed (inserted).", stderr.getvalue())
+
+    def test_run_lists_and_gets_stored_documents_without_ocr(self) -> None:
+        record = StoredDocument(
+            id="64b64b64b64b64b64b64b64b",
+            file_hash="a" * 64,
+            document=DocumentData(
+                document_type="invoice",
+                summary="A stored invoice",
+                expiry_date=None,
+                issue_date="2026-08-01",
+                extracted_data={"invoice_number": "42"},
+            ),
+            created_at=datetime(2026, 8, 11, 12, 0, tzinfo=UTC),
+        )
+        repository = FakeRepository([record])
+
+        list_stdout = StringIO()
+        list_exit_code = run(
+            ["--list-stored"],
+            repository_factory=lambda: repository,
+            stdout=list_stdout,
+            stderr=StringIO(),
+        )
+        get_stdout = StringIO()
+        get_exit_code = run(
+            ["--get-stored", record.id],
+            repository_factory=lambda: repository,
+            stdout=get_stdout,
+            stderr=StringIO(),
+        )
+
+        self.assertEqual(list_exit_code, 0)
+        self.assertEqual(json.loads(list_stdout.getvalue())[0]["id"], record.id)
+        self.assertEqual(get_exit_code, 0)
+        self.assertEqual(json.loads(get_stdout.getvalue())["id"], record.id)
+
+    def test_store_requires_structured_output(self) -> None:
+        stderr = StringIO()
+
+        exit_code = run(["sample.png", "--store"], stderr=stderr)
+
+        self.assertEqual(exit_code, 2)
+        self.assertEqual(stderr.getvalue(), "Input error: --store requires --structured.\n")
