@@ -10,6 +10,7 @@ requires-python = ">=3.11"
 dependencies = [
     "Pillow>=10.0,<12.0",
     "pytesseract>=0.3.10,<0.4",
+    "pydantic>=2.7,<3.0",
 ]
 
 [tool.setuptools.packages.find]

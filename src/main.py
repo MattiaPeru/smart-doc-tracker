@@ -1,20 +1,35 @@
-"""Command-line entry point for local document OCR."""
+"""Command-line entry point for local OCR and structured document parsing."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Protocol, TextIO
 
 from core.ocr import OCRDependencyError, OCRInputError, OCRProcessingError, TesseractOCR
+from core.parser import DocumentParser, DocumentParsingError
+from infrastructure.ollama import (
+    OllamaClient,
+    OllamaConfigurationError,
+    OllamaConnectionError,
+    OllamaResponseError,
+)
+from models.document import DocumentData
 
 
 class OCRService(Protocol):
     """Narrow interface required by the Phase 1 command-line workflow."""
 
     def extract_text(self, image_path: str | Path, *, language: str = "eng") -> str: ...
+
+
+class ParserService(Protocol):
+    """Narrow interface required by the structured parsing workflow."""
+
+    def parse(self, raw_text: str) -> DocumentData: ...
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -27,6 +42,21 @@ def build_parser() -> argparse.ArgumentParser:
         default="eng",
         help="Installed Tesseract language code (default: eng).",
     )
+    parser.add_argument(
+        "--structured",
+        action="store_true",
+        help="Parse OCR text into validated JSON with a local Ollama model.",
+    )
+    parser.add_argument(
+        "--model",
+        default="qwen2.5:3b",
+        help="Locally installed Ollama model (default: qwen2.5:3b).",
+    )
+    parser.add_argument(
+        "--ollama-url",
+        default="http://127.0.0.1:11434",
+        help="Loopback-only Ollama endpoint (default: http://127.0.0.1:11434).",
+    )
     return parser
 
 
@@ -34,21 +64,63 @@ def run(
     argv: Sequence[str] | None = None,
     *,
     ocr: OCRService | None = None,
+    document_parser: ParserService | None = None,
     stdout: TextIO = sys.stdout,
     stderr: TextIO = sys.stderr,
 ) -> int:
     args = build_parser().parse_args(argv)
     service = ocr or TesseractOCR()
+    total_steps = 2 if args.structured else 1
 
     try:
+        print(
+            f"[1/{total_steps}] Waiting for local Tesseract OCR to extract text...",
+            file=stderr,
+            flush=True,
+        )
         raw_text = service.extract_text(args.image, language=args.language)
     except (OCRInputError, OCRDependencyError, OCRProcessingError) as exc:
         print(f"OCR failed: {exc}", file=stderr)
         return 1
 
-    stdout.write(raw_text)
-    if raw_text and not raw_text.endswith("\n"):
-        stdout.write("\n")
+    print(f"[1/{total_steps}] OCR completed.", file=stderr, flush=True)
+
+    if not args.structured:
+        stdout.write(raw_text)
+        if raw_text and not raw_text.endswith("\n"):
+            stdout.write("\n")
+        return 0
+
+    try:
+        parser_service = document_parser or DocumentParser(
+            OllamaClient(base_url=args.ollama_url, model=args.model)
+        )
+        print(
+            f"[2/2] Waiting for local Ollama model '{args.model}' to generate "
+            "structured data...",
+            file=stderr,
+            flush=True,
+        )
+        document = parser_service.parse(raw_text)
+    except DocumentParsingError as exc:
+        print(f"Parsing failed: {exc}", file=stderr)
+        if exc.generated_response is not None:
+            print("Raw LLM response:", file=stderr)
+            print("---", file=stderr)
+            print(exc.generated_response, file=stderr)
+            print("---", file=stderr, flush=True)
+        return 1
+    except (
+        OllamaConfigurationError,
+        OllamaConnectionError,
+        OllamaResponseError,
+    ) as exc:
+        print(f"Parsing failed: {exc}", file=stderr)
+        return 1
+
+    print("[2/2] Structured parsing completed.", file=stderr, flush=True)
+    stdout.write(json.dumps(document.model_dump(mode="json"), indent=2))
+    stdout.write("\n")
     return 0
 
 

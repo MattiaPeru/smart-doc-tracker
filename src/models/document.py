@@ -1,0 +1,77 @@
+"""Hybrid document envelope and dynamic payload model."""
+
+from __future__ import annotations
+
+import re
+from math import isfinite
+from datetime import date, datetime
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+_SNAKE_CASE_KEY = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
+_DATE_FORMATS = ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d")
+_MISSING_DATE_VALUES = frozenset({"", "none", "null", "n/a", "unknown", "not_applicable"})
+
+
+class DocumentData(BaseModel):
+    """Validated common metadata plus document-specific extracted values."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    document_type: str = Field(min_length=1, max_length=100)
+    summary: str = Field(min_length=1, max_length=1000)
+    expiry_date: date | None
+    issue_date: date | None
+    extracted_data: dict[str, Any]
+
+    @field_validator("document_type")
+    @classmethod
+    def normalize_document_type(cls, value: str) -> str:
+        """Normalize the document category to a stable snake_case value."""
+        normalized = re.sub(r"[^a-z0-9]+", "_", value.strip().lower()).strip("_")
+        if not normalized:
+            raise ValueError("document_type must contain letters or numbers")
+        return normalized
+
+    @field_validator("expiry_date", "issue_date", mode="before")
+    @classmethod
+    def normalize_date(cls, value: object) -> object:
+        """Accept common unambiguous date forms and normalize them to a date."""
+        if value is None or isinstance(value, date):
+            return value
+        if not isinstance(value, str):
+            raise ValueError("date values must be strings or null")
+
+        candidate = value.strip()
+        if candidate.lower() in _MISSING_DATE_VALUES:
+            return None
+        for date_format in _DATE_FORMATS:
+            try:
+                return datetime.strptime(candidate, date_format).date()
+            except ValueError:
+                continue
+        raise ValueError("date values must use YYYY-MM-DD or a supported numeric format")
+
+    @field_validator("extracted_data")
+    @classmethod
+    def validate_dynamic_keys(cls, value: dict[str, Any]) -> dict[str, Any]:
+        """Require stable snake_case keys at every level of the dynamic payload."""
+        cls._validate_mapping_keys(value)
+        return value
+
+    @classmethod
+    def _validate_mapping_keys(cls, value: object) -> None:
+        if isinstance(value, dict):
+            for key, nested_value in value.items():
+                if not isinstance(key, str) or not _SNAKE_CASE_KEY.fullmatch(key):
+                    raise ValueError("extracted_data keys must use English snake_case")
+                cls._validate_mapping_keys(nested_value)
+        elif isinstance(value, list):
+            for item in value:
+                cls._validate_mapping_keys(item)
+        elif isinstance(value, float) and not isfinite(value):
+            raise ValueError("extracted_data numbers must be finite")
+        elif value is not None and not isinstance(value, (str, int, float, bool)):
+            raise ValueError("extracted_data values must be JSON-compatible")
