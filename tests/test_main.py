@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -11,6 +11,7 @@ from core.ocr import OCRInputError
 from core.parser import DocumentParsingError
 from db.database import DocumentInsertResult, StoredDocument
 from models.document import DocumentData
+from notifier.desktop import ExpirationNotification
 from main import run
 
 
@@ -49,6 +50,7 @@ class FakeRepository:
     def __init__(self, documents: list[StoredDocument] | None = None) -> None:
         self.documents = list(documents or [])
         self.insert_calls: list[tuple[DocumentData, str]] = []
+        self.expiration_calls: list[tuple[int, date | None]] = []
 
     def __enter__(self) -> FakeRepository:
         return self
@@ -74,6 +76,33 @@ class FakeRepository:
 
     def get_document_by_id(self, document_id: str) -> StoredDocument | None:
         return next((item for item in self.documents if item.id == document_id), None)
+
+    def get_expiring_documents(
+        self, days_threshold: int, *, today: date | None = None
+    ) -> list[StoredDocument]:
+        self.expiration_calls.append((days_threshold, today))
+        return [
+            item
+            for item in self.documents
+            if item.document.expiry_date is not None
+        ]
+
+
+class FakeNotifier:
+    def __init__(self) -> None:
+        self.notifications: list[ExpirationNotification] = []
+
+    def send(self, notification: ExpirationNotification) -> None:
+        self.notifications.append(notification)
+
+
+class ImmediateScheduler:
+    def __init__(self, task: object) -> None:
+        self.task = task
+
+    def run(self) -> None:
+        assert callable(self.task)
+        self.task()
 
 
 class MainTests(TestCase):
@@ -241,3 +270,59 @@ class MainTests(TestCase):
 
         self.assertEqual(exit_code, 2)
         self.assertEqual(stderr.getvalue(), "Input error: --store requires --structured.\n")
+
+    def test_run_checks_expirations_without_ocr(self) -> None:
+        record = StoredDocument(
+            id="64b64b64b64b64b64b64b64b",
+            file_hash="a" * 64,
+            document=DocumentData(
+                document_type="identity_card",
+                summary="A stored identity card",
+                expiry_date="2026-08-30",
+                issue_date=None,
+                extracted_data={"document_number": "PRIVATE-42"},
+            ),
+            created_at=datetime(2026, 8, 11, 12, 0, tzinfo=UTC),
+        )
+        repository = FakeRepository([record])
+        notifier = FakeNotifier()
+        stdout = StringIO()
+
+        exit_code = run(
+            ["--check-expirations", "--days-threshold", "21"],
+            repository_factory=lambda: repository,
+            notifier=notifier,
+            stdout=stdout,
+            stderr=StringIO(),
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            json.loads(stdout.getvalue()),
+            {"documents_found": 1, "notifications_sent": 1},
+        )
+        self.assertEqual(repository.expiration_calls[0][0], 21)
+        self.assertEqual(len(notifier.notifications), 1)
+
+    def test_run_schedules_daily_expiration_monitor(self) -> None:
+        repository = FakeRepository([])
+        stderr = StringIO()
+        scheduled_times: list[str] = []
+
+        def create_scheduler(task: object, check_time: object) -> ImmediateScheduler:
+            scheduled_times.append(str(check_time))
+            return ImmediateScheduler(task)
+
+        exit_code = run(
+            ["--monitor-expirations", "--check-time", "07:15"],
+            repository_factory=lambda: repository,
+            notifier=FakeNotifier(),
+            scheduler_factory=create_scheduler,
+            stdout=StringIO(),
+            stderr=stderr,
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(scheduled_times, ["07:15:00"])
+        self.assertIn("scheduled daily at 07:15", stderr.getvalue())
+        self.assertIn("Daily expiration check completed", stderr.getvalue())

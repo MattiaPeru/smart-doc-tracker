@@ -6,6 +6,7 @@ import argparse
 import json
 import sys
 from collections.abc import Callable, Sequence
+from datetime import date, time
 from pathlib import Path
 from typing import Protocol, TextIO
 
@@ -26,7 +27,19 @@ from infrastructure.ollama import (
     OllamaResponseError,
 )
 from models.document import DocumentData
-from pipeline import DocumentStoragePipeline
+from notifier.desktop import DesktopNotificationError, PlyerDesktopNotifier
+from pipeline import (
+    DocumentStoragePipeline,
+    ExpirationCheckResult,
+    ExpirationTrackingPipeline,
+    NotificationSender,
+)
+from scheduler import (
+    DailyTaskScheduler,
+    SchedulerConfigurationError,
+    SchedulerError,
+    parse_daily_time,
+)
 
 
 class OCRService(Protocol):
@@ -51,9 +64,19 @@ class RepositoryService(Protocol):
     ) -> DocumentInsertResult: ...
     def get_all_documents(self) -> list[StoredDocument]: ...
     def get_document_by_id(self, document_id: str) -> StoredDocument | None: ...
+    def get_expiring_documents(
+        self, days_threshold: int, *, today: date | None = None
+    ) -> list[StoredDocument]: ...
+
+
+class SchedulerRunner(Protocol):
+    """Blocking scheduler operation required by monitoring mode."""
+
+    def run(self) -> None: ...
 
 
 RepositoryFactory = Callable[[], RepositoryService]
+SchedulerFactory = Callable[[Callable[[], None], time], SchedulerRunner]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -76,16 +99,39 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Store validated structured data in the local MongoDB database.",
     )
-    read_group = parser.add_mutually_exclusive_group()
-    read_group.add_argument(
+    operation_group = parser.add_mutually_exclusive_group()
+    operation_group.add_argument(
         "--list-stored",
         action="store_true",
         help="Print every document stored by this project as JSON.",
     )
-    read_group.add_argument(
+    operation_group.add_argument(
         "--get-stored",
         metavar="DOCUMENT_ID",
         help="Print one stored document by its MongoDB identifier.",
+    )
+    operation_group.add_argument(
+        "--check-expirations",
+        action="store_true",
+        help="Check upcoming expirations and send local desktop alerts once.",
+    )
+    operation_group.add_argument(
+        "--monitor-expirations",
+        action="store_true",
+        help="Run the expiration check every day in the foreground.",
+    )
+    parser.add_argument(
+        "--days-threshold",
+        type=_non_negative_integer,
+        default=30,
+        help="Inclusive expiration window in days (default: 30).",
+    )
+    parser.add_argument(
+        "--check-time",
+        type=parse_daily_time,
+        default=parse_daily_time("09:00"),
+        metavar="HH:MM",
+        help="Local daily check time for monitoring mode (default: 09:00).",
     )
     parser.add_argument(
         "--model",
@@ -106,6 +152,8 @@ def run(
     ocr: OCRService | None = None,
     document_parser: ParserService | None = None,
     repository_factory: RepositoryFactory | None = None,
+    notifier: NotificationSender | None = None,
+    scheduler_factory: SchedulerFactory | None = None,
     stdout: TextIO = sys.stdout,
     stderr: TextIO = sys.stderr,
 ) -> int:
@@ -119,6 +167,23 @@ def run(
             args.get_stored,
             create_repository,
             stdout=stdout,
+            stderr=stderr,
+        )
+    if args.check_expirations:
+        return _check_expirations(
+            create_repository,
+            notifier or PlyerDesktopNotifier(),
+            days_threshold=args.days_threshold,
+            stdout=stdout,
+            stderr=stderr,
+        )
+    if args.monitor_expirations:
+        return _monitor_expirations(
+            create_repository,
+            notifier or PlyerDesktopNotifier(),
+            days_threshold=args.days_threshold,
+            check_time=args.check_time,
+            scheduler_factory=scheduler_factory,
             stderr=stderr,
         )
     if args.image is None:
@@ -241,6 +306,90 @@ def _get_stored_document(
     return 0
 
 
+def _check_expirations(
+    repository_factory: RepositoryFactory,
+    notifier: NotificationSender,
+    *,
+    days_threshold: int,
+    stdout: TextIO,
+    stderr: TextIO,
+) -> int:
+    try:
+        result = _perform_expiration_check(
+            repository_factory,
+            notifier,
+            days_threshold=days_threshold,
+        )
+    except (DatabaseConfigurationError, DatabaseError, DesktopNotificationError) as exc:
+        print(f"Expiration check failed: {exc}", file=stderr)
+        return 1
+    stdout.write(json.dumps(_serialize_expiration_result(result), indent=2))
+    stdout.write("\n")
+    return 0
+
+
+def _monitor_expirations(
+    repository_factory: RepositoryFactory,
+    notifier: NotificationSender,
+    *,
+    days_threshold: int,
+    check_time: time,
+    scheduler_factory: SchedulerFactory | None,
+    stderr: TextIO,
+) -> int:
+    def scheduled_check() -> None:
+        try:
+            result = _perform_expiration_check(
+                repository_factory,
+                notifier,
+                days_threshold=days_threshold,
+            )
+            print(
+                "Daily expiration check completed: "
+                f"{result.documents_found} document(s), "
+                f"{result.notifications_sent} notification(s).",
+                file=stderr,
+                flush=True,
+            )
+        except (
+            DatabaseConfigurationError,
+            DatabaseError,
+            DesktopNotificationError,
+        ) as exc:
+            print(f"Daily expiration check failed: {exc}", file=stderr, flush=True)
+
+    create_scheduler = scheduler_factory or (
+        lambda task, scheduled_time: DailyTaskScheduler(
+            task,
+            check_time=scheduled_time,
+        )
+    )
+    print(
+        f"Expiration monitoring scheduled daily at {check_time.strftime('%H:%M')}.",
+        file=stderr,
+        flush=True,
+    )
+    try:
+        create_scheduler(scheduled_check, check_time).run()
+    except KeyboardInterrupt:
+        print("Expiration monitoring stopped.", file=stderr)
+        return 0
+    except (SchedulerConfigurationError, SchedulerError) as exc:
+        print(f"Expiration monitoring failed: {exc}", file=stderr)
+        return 1
+    return 0
+
+
+def _perform_expiration_check(
+    repository_factory: RepositoryFactory,
+    notifier: NotificationSender,
+    *,
+    days_threshold: int,
+) -> ExpirationCheckResult:
+    with repository_factory() as repository:
+        return ExpirationTrackingPipeline(repository, notifier).check(days_threshold)
+
+
 def _serialize_insert_result(result: DocumentInsertResult) -> dict[str, object]:
     return {"inserted": result.inserted, **_serialize_stored(result.record)}
 
@@ -252,6 +401,23 @@ def _serialize_stored(record: StoredDocument) -> dict[str, object]:
         "created_at": record.created_at.isoformat(),
         "document": record.document.model_dump(mode="json"),
     }
+
+
+def _serialize_expiration_result(result: ExpirationCheckResult) -> dict[str, int]:
+    return {
+        "documents_found": result.documents_found,
+        "notifications_sent": result.notifications_sent,
+    }
+
+
+def _non_negative_integer(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a non-negative integer") from exc
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be a non-negative integer")
+    return parsed
 
 
 if __name__ == "__main__":

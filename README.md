@@ -106,10 +106,58 @@ unless they use plain `mongodb://` with an explicit loopback host and port.
 The `documents` collection stores validated structured data and the source-file
 hash; it does not copy the original image bytes into MongoDB.
 
+## Local expiration monitoring
+
+Run one expiration check and send a desktop notification for each document that
+expires today or within the next 30 days:
+
+```powershell
+python src/main.py --check-expirations
+```
+
+Use a different inclusive window when needed:
+
+```powershell
+python src/main.py --check-expirations --days-threshold 14
+```
+
+Keep the application running in the foreground and perform the same check every
+day at 09:00 in the host's local timezone:
+
+```powershell
+python src/main.py --monitor-expirations --check-time 09:00 --days-threshold 30
+```
+
+The monitoring process must remain running. Stop it with `Ctrl+C`. Alerts contain
+only the normalized document type and expiration date; OCR text and dynamic
+document fields are never included. MongoDB, native notifications, and scheduling
+remain local to the host.
+
+### Automatic Windows task
+
+Install a Windows Scheduled Task that performs the one-shot check every day at
+09:00, independently of VS Code:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\manage_expiration_task.ps1 Install -CheckTime 09:00 -DaysThreshold 30
+```
+
+The task runs as the current interactive Windows user so desktop notifications
+can be displayed. It is configured to run as soon as possible after startup and
+sign-in when the scheduled time was missed, and it may wake a sleeping computer.
+A fully powered-off computer cannot run the check until it is started. Docker
+Desktop and the loopback MongoDB container must also be running.
+
+Running the install command again updates the existing task. Remove it with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\manage_expiration_task.ps1 Uninstall
+```
+
 Supported formats are BMP, JPEG, PNG, TIFF, and WebP. Run the deterministic,
 offline test suite with:
 
 ```powershell
 $env:PYTHONPATH = "src"
-python -m unittest discover -s tests -v
+.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```

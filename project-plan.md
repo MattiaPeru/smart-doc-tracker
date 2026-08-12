@@ -60,6 +60,8 @@ local-ai-doc-vault/
     *   `search_by_dynamic_field(field_key, field_value)` (querying inside `extracted_data.<key>`).
 
 ### Phase 4: Active Monitoring (Expiration Tracking)
+**Status: Implemented.**
+
 *   Develop a query function to retrieve documents expiring within a specific timeframe (e.g., 30 days) from MongoDB via the standard `expiry_date` envelope field.
 *   Integrate a native notification library (`plyer`) to trigger OS-level desktop alerts for these items.
 *   Set up `APScheduler` to run the expiration check automatically on a daily basis.
