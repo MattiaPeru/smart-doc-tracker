@@ -1,1 +1,1 @@
-- CRUD operations must be asynchronous.
+- Some operation will be asynchronous (like data processing when the user uploads a file).
