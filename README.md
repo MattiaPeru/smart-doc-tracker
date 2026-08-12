@@ -145,8 +145,14 @@ powershell -ExecutionPolicy Bypass -File scripts\manage_expiration_task.ps1 Inst
 The task runs as the current interactive Windows user so desktop notifications
 can be displayed. It is configured to run as soon as possible after startup and
 sign-in when the scheduled time was missed, and it may wake a sleeping computer.
-A fully powered-off computer cannot run the check until it is started. Docker
-Desktop and the loopback MongoDB container must also be running.
+A fully powered-off computer cannot run the check until it is started.
+
+Before checking expirations, the scheduled runner verifies the Docker daemon. If
+needed, it starts Docker Desktop and waits up to two minutes for it to become
+ready. It then starts the project MongoDB service, without permitting an image
+pull, and waits for a successful local database ping. The expiration check runs
+only after both services are ready. Docker Desktop and the MongoDB image must
+already be installed locally.
 
 Running the install command again updates the existing task. Remove it with:
 

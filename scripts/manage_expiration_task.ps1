@@ -16,8 +16,8 @@ $ErrorActionPreference = "Stop"
 
 $taskName = "SmartDocTracker-ExpirationCheck"
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$pythonPath = Join-Path $projectRoot ".venv\Scripts\python.exe"
-$mainScript = Join-Path $projectRoot "src\main.py"
+$runnerScript = Join-Path $projectRoot "scripts\run_expiration_check.ps1"
+$powerShellPath = Join-Path $PSHOME "powershell.exe"
 
 if ($Operation -eq "Uninstall") {
     $existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
@@ -33,11 +33,8 @@ if ($Operation -eq "Uninstall") {
     exit 0
 }
 
-if (-not (Test-Path -LiteralPath $pythonPath -PathType Leaf)) {
-    throw "The project virtual environment was not found. Create .venv and install requirements first."
-}
-if (-not (Test-Path -LiteralPath $mainScript -PathType Leaf)) {
-    throw "The Smart Doc Tracker entry point was not found."
+if (-not (Test-Path -LiteralPath $runnerScript -PathType Leaf)) {
+    throw "The scheduled expiration runner was not found."
 }
 
 $parsedTime = [DateTime]::ParseExact(
@@ -46,11 +43,11 @@ $parsedTime = [DateTime]::ParseExact(
     [Globalization.CultureInfo]::InvariantCulture
 )
 $dailyStart = [DateTime]::Today.Add($parsedTime.TimeOfDay)
-$taskArguments = '"{0}" --check-expirations --days-threshold {1}' -f `
-    $mainScript, $DaysThreshold
+$taskArguments = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -DaysThreshold {1}' -f `
+    $runnerScript, $DaysThreshold
 
 $taskAction = New-ScheduledTaskAction `
-    -Execute $pythonPath `
+    -Execute $powerShellPath `
     -Argument $taskArguments `
     -WorkingDirectory $projectRoot
 $trigger = New-ScheduledTaskTrigger -Daily -At $dailyStart
