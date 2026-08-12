@@ -33,12 +33,16 @@ local-ai-doc-vault/
 ## 4. Implementation Roadmap
 
 ### Phase 1: Proof of Concept (OCR + Extraction)
+**Status: Implemented.**
+
 *   Set up the Python environment (`venv`) and dependencies.
 *   Implement a script to read a sample image file (e.g., a mockup ID card).
 *   Integrate `pytesseract` to extract raw text from the image.
 *   Output the raw text to the console for verification.
 
 ### Phase 2: Hybrid AI Parsing & Dynamic Structured Output
+**Status: Implemented.**
+
 *   Define a **Hybrid `Pydantic` Schema** consisting of:
     *   **Fixed Metadata Envelope:** Common required fields for system tasks (`document_type`, `summary`, `expiry_date`, `issue_date`).
     *   **Dynamic Payload (`extracted_data: Dict[str, Any]`):** A flexible dictionary field that captures all unique, document-specific attributes extracted by the LLM (e.g., tax code for ID cards, patient name for medical certificates, line items for invoices).
