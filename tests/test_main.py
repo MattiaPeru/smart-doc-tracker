@@ -11,7 +11,8 @@ from core.ocr import OCRInputError
 from core.parser import DocumentParsingError
 from db.database import DocumentInsertResult, StoredDocument
 from inbox import LocalDocumentFolders
-from models.document import DocumentData
+from core.pdf import ExtractedPage
+from models.document import DocumentData, ParsedLongDocument, StructuredDocumentSection
 from notifier.desktop import ExpirationNotification
 from main import run
 
@@ -52,6 +53,7 @@ class FakeRepository:
         self.documents = list(documents or [])
         self.insert_calls: list[tuple[DocumentData, str]] = []
         self.expiration_calls: list[tuple[int, date | None]] = []
+        self.section_calls: list[tuple[str, tuple[StructuredDocumentSection, ...]]] = []
 
     def __enter__(self) -> FakeRepository:
         return self
@@ -87,6 +89,40 @@ class FakeRepository:
             for item in self.documents
             if item.document.expiry_date is not None
         ]
+
+    def upsert_document_sections(
+        self,
+        document_id: str,
+        sections: tuple[StructuredDocumentSection, ...],
+    ) -> None:
+        self.section_calls.append((document_id, sections))
+
+
+class FakePDFExtractor:
+    def extract_pages(
+        self, pdf_path: str | Path, *, language: str = "eng"
+    ) -> tuple[ExtractedPage, ...]:
+        return (
+            ExtractedPage(1, "First local page", False),
+            ExtractedPage(2, "Second local page", True),
+        )
+
+
+class FakeLongParser:
+    def __init__(self, document: DocumentData) -> None:
+        self.document = document
+
+    def parse_pages(self, pages: tuple[ExtractedPage, ...]) -> ParsedLongDocument:
+        sections = tuple(
+            StructuredDocumentSection(
+                chunk_number=index,
+                page_from=page.page_number,
+                page_to=page.page_number,
+                document=self.document,
+            )
+            for index, page in enumerate(pages, start=1)
+        )
+        return ParsedLongDocument(self.document, sections)
 
 
 class FakeNotifier:
@@ -180,7 +216,7 @@ class MainTests(TestCase):
         )
         self.assertEqual(parser.calls, ["raw local text"])
 
-    def test_run_outputs_raw_llm_response_when_parsing_fails(self) -> None:
+    def test_run_does_not_output_raw_llm_response_when_parsing_fails(self) -> None:
         stdout = StringIO()
         stderr = StringIO()
 
@@ -195,7 +231,7 @@ class MainTests(TestCase):
         self.assertEqual(exit_code, 1)
         self.assertEqual(stdout.getvalue(), "")
         self.assertIn("Parsing failed:", stderr.getvalue())
-        self.assertIn("Raw LLM response:\n---\nnot valid JSON\n---\n", stderr.getvalue())
+        self.assertNotIn("not valid JSON", stderr.getvalue())
 
     def test_run_stores_structured_document_using_source_file_hash(self) -> None:
         stdout = StringIO()
@@ -228,6 +264,37 @@ class MainTests(TestCase):
         self.assertEqual(payload["document"]["document_type"], "identity_card")
         self.assertEqual(len(repository.insert_calls[0][1]), 64)
         self.assertIn("MongoDB storage completed (inserted).", stderr.getvalue())
+
+    def test_run_processes_and_stores_a_generic_pdf_with_sections(self) -> None:
+        stdout = StringIO()
+        stderr = StringIO()
+        repository = FakeRepository()
+        document = DocumentData(
+            document_type="technical_report",
+            summary="A generic multi-page report",
+            expiry_date=None,
+            issue_date="2026-08-01",
+            extracted_data={"report_number": "R-42"},
+        )
+
+        with TemporaryDirectory() as directory:
+            pdf_path = Path(directory) / "report.pdf"
+            pdf_path.write_bytes(b"local pdf fixture")
+            exit_code = run(
+                [str(pdf_path), "--structured", "--store"],
+                pdf_extractor=FakePDFExtractor(),
+                long_document_parser=FakeLongParser(document),
+                repository_factory=lambda: repository,
+                stdout=stdout,
+                stderr=stderr,
+            )
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["document"]["document_type"], "technical_report")
+        self.assertEqual(len(repository.section_calls), 1)
+        self.assertEqual(len(repository.section_calls[0][1]), 2)
+        self.assertIn("PDF extraction completed", stderr.getvalue())
 
     def test_run_lists_and_gets_stored_documents_without_ocr(self) -> None:
         record = StoredDocument(

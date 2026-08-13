@@ -41,6 +41,8 @@ class OllamaClient:
         *,
         base_url: str = "http://127.0.0.1:11434",
         model: str = "qwen2.5:3b",
+        context_length: int = 8_192,
+        max_output_tokens: int = 2_048,
         timeout_seconds: float = 120.0,
         transport: Transport = urlopen,
     ) -> None:
@@ -49,7 +51,15 @@ class OllamaClient:
             raise OllamaConfigurationError("The Ollama model name cannot be empty.")
         if timeout_seconds <= 0:
             raise OllamaConfigurationError("The Ollama timeout must be positive.")
+        if context_length <= 0:
+            raise OllamaConfigurationError("The Ollama context length must be positive.")
+        if max_output_tokens <= 0 or max_output_tokens >= context_length:
+            raise OllamaConfigurationError(
+                "The Ollama output limit must be positive and smaller than the context."
+            )
         self._model = model
+        self._context_length = context_length
+        self._max_output_tokens = max_output_tokens
         self._timeout_seconds = timeout_seconds
         self._transport = transport
 
@@ -62,7 +72,11 @@ class OllamaClient:
                 "prompt": user_prompt,
                 "format": "json",
                 "stream": False,
-                "options": {"temperature": 0.1},
+                "options": {
+                    "temperature": 0.1,
+                    "num_ctx": self._context_length,
+                    "num_predict": self._max_output_tokens,
+                },
             }
         ).encode("utf-8")
         request = Request(

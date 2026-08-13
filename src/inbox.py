@@ -7,6 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from core.ocr import SUPPORTED_IMAGE_EXTENSIONS
+from core.pdf import SUPPORTED_PDF_EXTENSIONS
+
+
+SUPPORTED_DOCUMENT_EXTENSIONS = SUPPORTED_IMAGE_EXTENSIONS | SUPPORTED_PDF_EXTENSIONS
 
 
 class InboxError(RuntimeError):
@@ -56,7 +60,7 @@ class LocalDocumentFolders:
                 is_supported = (
                     not entry.is_symlink()
                     and entry.is_file()
-                    and entry.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS
+                    and entry.suffix.lower() in SUPPORTED_DOCUMENT_EXTENSIONS
                 )
             except OSError:
                 is_supported = False

@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
+from collections.abc import Sequence
 from typing import Any, Protocol
 from urllib.parse import urlsplit
 
@@ -13,7 +14,7 @@ from pymongo import ASCENDING, MongoClient
 from pymongo.collection import Collection
 from pymongo.errors import DuplicateKeyError, PyMongoError
 
-from models.document import DocumentData
+from models.document import DocumentData, StructuredDocumentSection
 
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -65,9 +66,11 @@ class MongoDocumentRepository:
         self,
         collection: DocumentCollection,
         *,
+        sections_collection: DocumentCollection | None = None,
         client: MongoClient[dict[str, Any]] | None = None,
     ) -> None:
         self._collection = collection
+        self._sections_collection = sections_collection
         self._client = client
 
     @classmethod
@@ -94,17 +97,34 @@ class MongoDocumentRepository:
         )
         try:
             client.admin.command("ping")
-            collection: Collection[dict[str, Any]] = client[database_name][collection_name]
+            database = client[database_name]
+            collection: Collection[dict[str, Any]] = database[collection_name]
+            sections_collection: Collection[dict[str, Any]] = database[
+                "document_sections"
+            ]
             collection.create_index(
                 [("file_hash", ASCENDING)], unique=True, name="unique_file_hash"
             )
             collection.create_index(
                 [("expiry_date", ASCENDING)], name="expiry_date_lookup"
             )
+            sections_collection.create_index(
+                [("document_id", ASCENDING), ("chunk_number", ASCENDING)],
+                unique=True,
+                name="unique_document_chunk",
+            )
+            sections_collection.create_index(
+                [("document_id", ASCENDING), ("page_from", ASCENDING)],
+                name="document_page_lookup",
+            )
         except PyMongoError as exc:
             client.close()
             raise DatabaseError("The local MongoDB service is unavailable.") from exc
-        return cls(collection, client=client)
+        return cls(
+            collection,
+            sections_collection=sections_collection,
+            client=client,
+        )
 
     def close(self) -> None:
         """Close the owned MongoDB client, if this repository created one."""
@@ -150,6 +170,50 @@ class MongoDocumentRepository:
         if stored is None:
             raise DatabaseError("The stored document could not be retrieved.")
         return DocumentInsertResult(record=_to_stored_document(stored), inserted=inserted)
+
+    def upsert_document_sections(
+        self,
+        document_id: str,
+        sections: Sequence[StructuredDocumentSection],
+    ) -> None:
+        """Persist validated PDF section analyses without storing raw page text."""
+        if self._sections_collection is None:
+            raise DatabaseConfigurationError(
+                "Document section persistence is not configured."
+            )
+        if not ObjectId.is_valid(document_id):
+            raise ValueError("document_id must be a valid MongoDB identifier")
+        identifier = ObjectId(document_id)
+
+        try:
+            for section in sections:
+                document_payload = section.document.model_dump(mode="python")
+                document_payload["expiry_date"] = _date_to_datetime(
+                    section.document.expiry_date
+                )
+                document_payload["issue_date"] = _date_to_datetime(
+                    section.document.issue_date
+                )
+                self._sections_collection.update_one(
+                    {
+                        "document_id": identifier,
+                        "chunk_number": section.chunk_number,
+                    },
+                    {
+                        "$setOnInsert": {
+                            "document_id": identifier,
+                            "chunk_number": section.chunk_number,
+                            "page_from": section.page_from,
+                            "page_to": section.page_to,
+                            "structured_data": document_payload,
+                        }
+                    },
+                    upsert=True,
+                )
+        except PyMongoError as exc:
+            raise DatabaseError(
+                "The structured document sections could not be stored locally."
+            ) from exc
 
     def get_document_by_id(self, document_id: str) -> StoredDocument | None:
         """Return one stored document, or None for an unknown or invalid identifier."""

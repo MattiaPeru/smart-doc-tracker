@@ -1,9 +1,9 @@
 # smart-doc-tracker
 An intelligent, offline-first tool to manage personal paperwork. Combines Tesseract OCR and local LLMs to turn unstructured files into searchable, trackable data.
 
-## Local OCR and structured parsing
+## Local OCR, PDF extraction, and structured parsing
 
-The application reads a local image, extracts raw text with Tesseract, and can pass
+The application reads local images and PDFs, extracts text locally, and can pass
 that text to an Ollama model running exclusively on the loopback interface. The
 model output is sanitized and validated as a hybrid Pydantic document: a fixed
 metadata envelope plus a flexible `extracted_data` payload. Validated documents
@@ -44,13 +44,26 @@ Process an image and store its validated data in local MongoDB:
 python src/main.py path\to\sample.png --language ita --structured --store
 ```
 
+Process a PDF of any document type in bounded page-aware sections:
+
+```powershell
+python src/main.py path\to\document.pdf --language ita --structured --store
+```
+
+Digital PDF pages are read directly. Pages without a usable text layer fall back
+to local Tesseract OCR. Long PDFs are split into bounded sections before local
+Ollama processing; the default client context is 8,192 tokens with at most 2,048
+generated tokens per request. The consolidated record is stored in `documents`,
+while page ranges and partial structured results are stored in
+`document_sections`. Raw PDF text is not persisted in MongoDB.
+
 The command prints the MongoDB document ID, SHA-256 source-file hash, insertion
 status, and validated document data. Repeating it with the same file returns
 `"inserted": false` and does not create a duplicate.
 
 ## Inbox automation
 
-Place supported image documents in `data/inbox`, then run the complete local
+Place supported image or PDF documents in `data/inbox`, then run the complete local
 pipeline with:
 
 ```powershell
@@ -201,7 +214,7 @@ Running the install command again updates the existing task. Remove it with:
 powershell -ExecutionPolicy Bypass -File scripts\manage_expiration_task.ps1 Uninstall
 ```
 
-Supported formats are BMP, JPEG, PNG, TIFF, and WebP. Run the deterministic,
+Supported formats are BMP, JPEG, PNG, TIFF, WebP, and PDF. Run the deterministic,
 offline test suite with:
 
 ```powershell

@@ -6,9 +6,10 @@ from tempfile import TemporaryDirectory
 from unittest import TestCase
 
 from core.ocr import OCRProcessingError
+from core.pdf import ExtractedPage
 from db.database import DocumentInsertResult, StoredDocument
 from inbox import LocalDocumentFolders
-from models.document import DocumentData
+from models.document import DocumentData, ParsedLongDocument, StructuredDocumentSection
 from pipeline import InboxProcessingPipeline
 
 
@@ -38,6 +39,7 @@ class FakeParser:
 class FakeWriter:
     def __init__(self) -> None:
         self.calls: list[tuple[DocumentData, str]] = []
+        self.section_calls: list[tuple[str, tuple[StructuredDocumentSection, ...]]] = []
 
     def insert_document(
         self, document: DocumentData, *, file_hash: str
@@ -52,6 +54,36 @@ class FakeWriter:
             ),
             inserted=True,
         )
+
+    def upsert_document_sections(
+        self,
+        document_id: str,
+        sections: tuple[StructuredDocumentSection, ...],
+    ) -> None:
+        self.section_calls.append((document_id, sections))
+
+
+class FakePDFExtractor:
+    def __init__(self) -> None:
+        self.calls: list[tuple[Path, str]] = []
+
+    def extract_pages(
+        self, pdf_path: str | Path, *, language: str = "eng"
+    ) -> tuple[ExtractedPage, ...]:
+        path = Path(pdf_path)
+        self.calls.append((path, language))
+        return (ExtractedPage(1, "Local PDF text", False),)
+
+
+class FakeLongParser:
+    def __init__(self, document: DocumentData) -> None:
+        self.document = document
+        self.calls: list[tuple[ExtractedPage, ...]] = []
+
+    def parse_pages(self, pages: tuple[ExtractedPage, ...]) -> ParsedLongDocument:
+        self.calls.append(pages)
+        section = StructuredDocumentSection(1, 1, 1, self.document)
+        return ParsedLongDocument(self.document, (section,))
 
 
 def _document() -> DocumentData:
@@ -119,6 +151,36 @@ class InboxProcessingPipelineTests(TestCase):
             self.assertTrue((inbox / "broken.png").is_file())
             self.assertTrue((processed / "valid.png").is_file())
             self.assertEqual(len(writer.calls), 1)
+
+    def test_processes_pdf_and_persists_page_aware_sections(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            inbox = root / "inbox"
+            processed = root / "processed"
+            inbox.mkdir()
+            source = inbox / "generic-document.pdf"
+            source.write_bytes(b"local pdf fixture")
+            ocr = FakeOCR()
+            extractor = FakePDFExtractor()
+            long_parser = FakeLongParser(_document())
+            writer = FakeWriter()
+
+            result = InboxProcessingPipeline(
+                ocr=ocr,
+                parser=FakeParser(_document()),
+                repository=writer,
+                folders=LocalDocumentFolders(inbox, processed),
+                language="ita",
+                pdf_extractor=extractor,
+                long_document_parser=long_parser,
+            ).process()
+
+            self.assertEqual(result.processed, 1)
+            self.assertEqual(ocr.calls, [])
+            self.assertEqual(extractor.calls, [(source, "ita")])
+            self.assertEqual(len(long_parser.calls), 1)
+            self.assertEqual(len(writer.section_calls), 1)
+            self.assertTrue((processed / source.name).is_file())
 
     def test_archive_does_not_overwrite_an_existing_processed_file(self) -> None:
         with TemporaryDirectory() as directory:

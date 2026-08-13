@@ -12,7 +12,14 @@ from typing import Protocol, TextIO
 
 from core.file_hash import FileHashingError
 from core.ocr import OCRDependencyError, OCRInputError, OCRProcessingError, TesseractOCR
-from core.parser import DocumentParser, DocumentParsingError
+from core.parser import DocumentParser, DocumentParsingError, LongDocumentParser
+from core.pdf import (
+    ExtractedPage,
+    LocalPDFTextExtractor,
+    PDFDependencyError,
+    PDFInputError,
+    PDFProcessingError,
+)
 from db.database import (
     DatabaseConfigurationError,
     DatabaseError,
@@ -27,7 +34,7 @@ from infrastructure.ollama import (
     OllamaResponseError,
 )
 from inbox import InboxError, LocalDocumentFolders
-from models.document import DocumentData
+from models.document import DocumentData, ParsedLongDocument, StructuredDocumentSection
 from notifier.desktop import DesktopNotificationError, PlyerDesktopNotifier
 from pipeline import (
     DocumentStoragePipeline,
@@ -35,7 +42,9 @@ from pipeline import (
     ExpirationTrackingPipeline,
     InboxProcessingPipeline,
     InboxProcessingResult,
+    LongStructuredDocumentParser,
     NotificationSender,
+    PDFPageExtractor,
 )
 from scheduler import (
     DailyTaskScheduler,
@@ -70,6 +79,11 @@ class RepositoryService(Protocol):
     def get_expiring_documents(
         self, days_threshold: int, *, today: date | None = None
     ) -> list[StoredDocument]: ...
+    def upsert_document_sections(
+        self,
+        document_id: str,
+        sections: Sequence[StructuredDocumentSection],
+    ) -> None: ...
 
 
 class SchedulerRunner(Protocol):
@@ -179,6 +193,8 @@ def run(
     notifier: NotificationSender | None = None,
     scheduler_factory: SchedulerFactory | None = None,
     folders_factory: DocumentFoldersFactory = LocalDocumentFolders,
+    pdf_extractor: PDFPageExtractor | None = None,
+    long_document_parser: LongStructuredDocumentParser | None = None,
     stdout: TextIO = sys.stdout,
     stderr: TextIO = sys.stderr,
 ) -> int:
@@ -223,6 +239,8 @@ def run(
             inbox_dir=args.inbox_dir,
             processed_dir=args.processed_dir,
             folders_factory=folders_factory,
+            pdf_extractor=pdf_extractor,
+            long_document_parser=long_document_parser,
             stdout=stdout,
             stderr=stderr,
         )
@@ -239,6 +257,8 @@ def run(
             inbox_dir=args.inbox_dir,
             processed_dir=args.processed_dir,
             folders_factory=folders_factory,
+            pdf_extractor=pdf_extractor,
+            long_document_parser=long_document_parser,
             stdout=stdout,
             stderr=stderr,
         )
@@ -250,20 +270,49 @@ def run(
         return 2
 
     service = ocr or TesseractOCR()
+    is_pdf = args.image.suffix.lower() == ".pdf"
     total_steps = 3 if args.store else (2 if args.structured else 1)
+    pages: tuple[ExtractedPage, ...] | None = None
 
     try:
-        print(
-            f"[1/{total_steps}] Waiting for local Tesseract OCR to extract text...",
-            file=stderr,
-            flush=True,
-        )
-        raw_text = service.extract_text(args.image, language=args.language)
-    except (OCRInputError, OCRDependencyError, OCRProcessingError) as exc:
-        print(f"OCR failed: {exc}", file=stderr)
+        if is_pdf:
+            print(
+                f"[1/{total_steps}] Extracting PDF text page by page locally...",
+                file=stderr,
+                flush=True,
+            )
+            pages = (pdf_extractor or LocalPDFTextExtractor()).extract_pages(
+                args.image,
+                language=args.language,
+            )
+            raw_text = "\n\n".join(
+                f"[Page {page.page_number}]\n{page.text}" for page in pages
+            )
+        else:
+            print(
+                f"[1/{total_steps}] Waiting for local Tesseract OCR to extract text...",
+                file=stderr,
+                flush=True,
+            )
+            raw_text = service.extract_text(args.image, language=args.language)
+    except (
+        OCRInputError,
+        OCRDependencyError,
+        OCRProcessingError,
+        PDFInputError,
+        PDFDependencyError,
+        PDFProcessingError,
+    ) as exc:
+        failure_label = "PDF extraction" if is_pdf else "OCR"
+        print(f"{failure_label} failed: {exc}", file=stderr)
         return 1
 
-    print(f"[1/{total_steps}] OCR completed.", file=stderr, flush=True)
+    extraction_label = "PDF extraction" if is_pdf else "OCR"
+    print(
+        f"[1/{total_steps}] {extraction_label} completed.",
+        file=stderr,
+        flush=True,
+    )
 
     if not args.structured:
         stdout.write(raw_text)
@@ -272,23 +321,32 @@ def run(
         return 0
 
     try:
-        parser_service = document_parser or DocumentParser(
-            OllamaClient(base_url=args.ollama_url, model=args.model)
-        )
+        generator = OllamaClient(base_url=args.ollama_url, model=args.model)
         print(
             f"[2/{total_steps}] Waiting for local Ollama model '{args.model}' to generate "
             "structured data...",
             file=stderr,
             flush=True,
         )
-        document = parser_service.parse(raw_text)
+        parsed_long_document: ParsedLongDocument | None = None
+        if pages is not None:
+            parsed_long_document = (
+                long_document_parser
+                or LongDocumentParser(
+                    generator,
+                    progress_callback=lambda current, total: print(
+                        f"[2/{total_steps}] Analyzing PDF section {current}/{total}...",
+                        file=stderr,
+                        flush=True,
+                    ),
+                )
+            ).parse_pages(pages)
+            document = parsed_long_document.document
+        else:
+            parser_service = document_parser or DocumentParser(generator)
+            document = parser_service.parse(raw_text)
     except DocumentParsingError as exc:
         print(f"Parsing failed: {exc}", file=stderr)
-        if exc.generated_response is not None:
-            print("Raw LLM response:", file=stderr)
-            print("---", file=stderr)
-            print(exc.generated_response, file=stderr)
-            print("---", file=stderr, flush=True)
         return 1
     except (
         OllamaConfigurationError,
@@ -313,6 +371,11 @@ def run(
         )
         with create_repository() as repository:
             result = DocumentStoragePipeline(repository).store(args.image, document)
+            if parsed_long_document is not None:
+                repository.upsert_document_sections(
+                    result.record.id,
+                    parsed_long_document.sections,
+                )
     except (FileHashingError, DatabaseConfigurationError, DatabaseError) as exc:
         print(f"Storage failed: {exc}", file=stderr)
         return 1
@@ -485,12 +548,21 @@ def _process_inbox(
     inbox_dir: Path,
     processed_dir: Path,
     folders_factory: DocumentFoldersFactory,
+    pdf_extractor: PDFPageExtractor | None,
+    long_document_parser: LongStructuredDocumentParser | None,
     stdout: TextIO,
     stderr: TextIO,
 ) -> int:
     try:
-        parser_service = document_parser or DocumentParser(
-            OllamaClient(base_url=ollama_url, model=model)
+        generator = OllamaClient(base_url=ollama_url, model=model)
+        parser_service = document_parser or DocumentParser(generator)
+        long_parser_service = long_document_parser or LongDocumentParser(
+            generator,
+            progress_callback=lambda current, total: print(
+                f"Analyzing PDF section {current}/{total}...",
+                file=stderr,
+                flush=True,
+            ),
         )
         folders = folders_factory(inbox_dir, processed_dir)
         print(
@@ -505,6 +577,8 @@ def _process_inbox(
                 repository=repository,
                 folders=folders,
                 language=language,
+                pdf_extractor=pdf_extractor or LocalPDFTextExtractor(),
+                long_document_parser=long_parser_service,
             ).process()
     except (
         InboxError,
@@ -545,12 +619,21 @@ def _run_complete_pipeline(
     inbox_dir: Path,
     processed_dir: Path,
     folders_factory: DocumentFoldersFactory,
+    pdf_extractor: PDFPageExtractor | None,
+    long_document_parser: LongStructuredDocumentParser | None,
     stdout: TextIO,
     stderr: TextIO,
 ) -> int:
     try:
-        parser_service = document_parser or DocumentParser(
-            OllamaClient(base_url=ollama_url, model=model)
+        generator = OllamaClient(base_url=ollama_url, model=model)
+        parser_service = document_parser or DocumentParser(generator)
+        long_parser_service = long_document_parser or LongDocumentParser(
+            generator,
+            progress_callback=lambda current, total: print(
+                f"Analyzing PDF section {current}/{total}...",
+                file=stderr,
+                flush=True,
+            ),
         )
         folders = folders_factory(inbox_dir, processed_dir)
         print("Starting the complete local document pipeline...", file=stderr, flush=True)
@@ -567,6 +650,8 @@ def _run_complete_pipeline(
                     repository=repository,
                     folders=folders,
                     language=language,
+                    pdf_extractor=pdf_extractor or LocalPDFTextExtractor(),
+                    long_document_parser=long_parser_service,
                 ).process()
                 print(
                     "[1/2] Inbox processing completed: "

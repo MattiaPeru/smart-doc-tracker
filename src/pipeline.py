@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -12,6 +13,12 @@ from core.file_hash import calculate_file_sha256
 from core.file_hash import FileHashingError
 from core.ocr import OCRDependencyError, OCRInputError, OCRProcessingError
 from core.parser import DocumentParsingError
+from core.pdf import (
+    ExtractedPage,
+    PDFDependencyError,
+    PDFInputError,
+    PDFProcessingError,
+)
 from db.database import DatabaseError
 from db.database import DocumentInsertResult, StoredDocument
 from inbox import InboxError, InboxScan
@@ -20,7 +27,11 @@ from infrastructure.ollama import (
     OllamaConnectionError,
     OllamaResponseError,
 )
-from models.document import DocumentData
+from models.document import (
+    DocumentData,
+    ParsedLongDocument,
+    StructuredDocumentSection,
+)
 from notifier.desktop import ExpirationNotification
 
 
@@ -30,6 +41,11 @@ class DocumentWriter(Protocol):
     def insert_document(
         self, document: DocumentData, *, file_hash: str
     ) -> DocumentInsertResult: ...
+    def upsert_document_sections(
+        self,
+        document_id: str,
+        sections: Sequence[StructuredDocumentSection],
+    ) -> None: ...
 
 
 FileHasher = Callable[[str | Path], str]
@@ -61,6 +77,20 @@ class StructuredDocumentParser(Protocol):
     def parse(self, raw_text: str) -> DocumentData: ...
 
 
+class PDFPageExtractor(Protocol):
+    """Narrow local PDF extraction interface required by automation."""
+
+    def extract_pages(
+        self, pdf_path: str | Path, *, language: str = "eng"
+    ) -> tuple[ExtractedPage, ...]: ...
+
+
+class LongStructuredDocumentParser(Protocol):
+    """Narrow page-aware parsing interface for long PDF documents."""
+
+    def parse_pages(self, pages: tuple[ExtractedPage, ...]) -> ParsedLongDocument: ...
+
+
 class DocumentFolders(Protocol):
     """Narrow local file-management interface required by inbox automation."""
 
@@ -85,6 +115,28 @@ class DocumentStoragePipeline:
         )
 
 
+@dataclass(slots=True)
+class PDFDocumentStoragePipeline:
+    """Extract, parse, and persist a page-aware PDF using bounded prompts."""
+
+    extractor: PDFPageExtractor
+    parser: LongStructuredDocumentParser
+    repository: DocumentWriter
+    language: str = "eng"
+    file_hasher: FileHasher = calculate_file_sha256
+
+    def process(self, source_path: str | Path) -> DocumentInsertResult:
+        """Persist the consolidated document and its structured page sections."""
+        pages = self.extractor.extract_pages(source_path, language=self.language)
+        parsed = self.parser.parse_pages(pages)
+        result = self.repository.insert_document(
+            parsed.document,
+            file_hash=self.file_hasher(source_path),
+        )
+        self.repository.upsert_document_sections(result.record.id, parsed.sections)
+        return result
+
+
 @dataclass(frozen=True, slots=True)
 class InboxProcessingResult:
     """Privacy-conscious summary of one inbox scan."""
@@ -105,6 +157,8 @@ class InboxProcessingPipeline:
     repository: DocumentWriter
     folders: DocumentFolders
     language: str = "eng"
+    pdf_extractor: PDFPageExtractor | None = None
+    long_document_parser: LongStructuredDocumentParser | None = None
 
     def process(self) -> InboxProcessingResult:
         """Process every supported inbox file, isolating expected per-file failures."""
@@ -116,14 +170,32 @@ class InboxProcessingPipeline:
         storage = DocumentStoragePipeline(self.repository)
         for source_path in scan.files:
             try:
-                raw_text = self.ocr.extract_text(source_path, language=self.language)
-                document = self.parser.parse(raw_text)
-                insert_result = storage.store(source_path, document)
+                if source_path.suffix.lower() == ".pdf":
+                    if self.pdf_extractor is None or self.long_document_parser is None:
+                        raise PDFDependencyError(
+                            "PDF processing components are not configured."
+                        )
+                    insert_result = PDFDocumentStoragePipeline(
+                        extractor=self.pdf_extractor,
+                        parser=self.long_document_parser,
+                        repository=self.repository,
+                        language=self.language,
+                    ).process(source_path)
+                else:
+                    raw_text = self.ocr.extract_text(
+                        source_path,
+                        language=self.language,
+                    )
+                    document = self.parser.parse(raw_text)
+                    insert_result = storage.store(source_path, document)
                 self.folders.archive(source_path)
             except (
                 OCRInputError,
                 OCRDependencyError,
                 OCRProcessingError,
+                PDFInputError,
+                PDFDependencyError,
+                PDFProcessingError,
                 DocumentParsingError,
                 OllamaConfigurationError,
                 OllamaConnectionError,

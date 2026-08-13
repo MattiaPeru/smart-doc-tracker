@@ -45,6 +45,8 @@ class OllamaClientTests(TestCase):
         self.assertEqual(payload["model"], "qwen2.5:3b")
         self.assertEqual(payload["format"], "json")
         self.assertFalse(payload["stream"])
+        self.assertEqual(payload["options"]["num_ctx"], 8_192)
+        self.assertEqual(payload["options"]["num_predict"], 2_048)
         self.assertEqual(timeout, 120.0)
 
     def test_rejects_non_loopback_endpoint(self) -> None:

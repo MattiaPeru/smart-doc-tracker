@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from math import isfinite
 from datetime import date, datetime
 from typing import Any
@@ -75,3 +76,31 @@ class DocumentData(BaseModel):
             raise ValueError("extracted_data numbers must be finite")
         elif value is not None and not isinstance(value, (str, int, float, bool)):
             raise ValueError("extracted_data values must be JSON-compatible")
+
+
+@dataclass(frozen=True, slots=True)
+class StructuredDocumentSection:
+    """Validated partial document data associated with a PDF page range."""
+
+    chunk_number: int
+    page_from: int
+    page_to: int
+    document: DocumentData
+
+    def __post_init__(self) -> None:
+        if self.chunk_number <= 0:
+            raise ValueError("chunk_number must be positive")
+        if self.page_from <= 0 or self.page_to < self.page_from:
+            raise ValueError("The section page range is invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedLongDocument:
+    """Consolidated document data and its page-aware structured sections."""
+
+    document: DocumentData
+    sections: tuple[StructuredDocumentSection, ...]
+
+    def __post_init__(self) -> None:
+        if not self.sections:
+            raise ValueError("A parsed long document must contain sections")

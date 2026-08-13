@@ -10,7 +10,7 @@ from unittest.mock import patch
 from bson import ObjectId
 
 from db.database import DatabaseConfigurationError, MongoDocumentRepository
-from models.document import DocumentData
+from models.document import DocumentData, StructuredDocumentSection
 
 
 @dataclass
@@ -94,7 +94,11 @@ def _document(*, expiry_date: str | None = "2030-01-10") -> DocumentData:
 class MongoDocumentRepositoryTests(TestCase):
     def setUp(self) -> None:
         self.collection = FakeCollection()
-        self.repository = MongoDocumentRepository(self.collection)
+        self.sections_collection = FakeCollection()
+        self.repository = MongoDocumentRepository(
+            self.collection,
+            sections_collection=self.sections_collection,
+        )
         self.file_hash = "a" * 64
         self.created_at = datetime(2026, 8, 11, 12, 30, tzinfo=UTC)
 
@@ -166,6 +170,30 @@ class MongoDocumentRepositoryTests(TestCase):
         with self.assertRaisesRegex(ValueError, "SHA-256"):
             self.repository.insert_document(_document(), file_hash="invalid")
 
+    def test_persists_structured_pdf_sections_idempotently(self) -> None:
+        inserted = self.repository.insert_document(
+            _document(), file_hash=self.file_hash, created_at=self.created_at
+        )
+        section = StructuredDocumentSection(
+            chunk_number=1,
+            page_from=1,
+            page_to=3,
+            document=_document(),
+        )
+
+        self.repository.upsert_document_sections(inserted.record.id, [section])
+        self.repository.upsert_document_sections(inserted.record.id, [section])
+
+        self.assertEqual(len(self.sections_collection.documents), 1)
+        stored = self.sections_collection.documents[0]
+        self.assertEqual(stored["page_from"], 1)
+        self.assertEqual(stored["page_to"], 3)
+        self.assertEqual(
+            stored["structured_data"]["document_type"],
+            "insurance_policy",
+        )
+        self.assertNotIn("raw_text", stored)
+
     def test_rejects_remote_mongodb_uri_before_connecting(self) -> None:
         for uri in (
             "mongodb://example.com:27017",
@@ -207,7 +235,12 @@ class MongoDocumentRepositoryTests(TestCase):
         self.assertTrue(client.pinged)
         self.assertEqual(
             [options["name"] for _keys, options in collection.indexes],
-            ["unique_file_hash", "expiry_date_lookup"],
+            [
+                "unique_file_hash",
+                "expiry_date_lookup",
+                "unique_document_chunk",
+                "document_page_lookup",
+            ],
         )
         self.assertTrue(collection.indexes[0][1]["unique"])
         constructor.assert_called_once_with(
