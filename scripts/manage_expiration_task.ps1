@@ -8,7 +8,10 @@ param(
     [string]$CheckTime = "09:00",
 
     [ValidateRange(0, 3650)]
-    [int]$DaysThreshold = 30
+    [int]$DaysThreshold = 30,
+
+    [ValidatePattern("^[A-Za-z][A-Za-z0-9_+.-]*$")]
+    [string]$OcrLanguage = "eng"
 )
 
 Set-StrictMode -Version Latest
@@ -43,8 +46,9 @@ $parsedTime = [DateTime]::ParseExact(
     [Globalization.CultureInfo]::InvariantCulture
 )
 $dailyStart = [DateTime]::Today.Add($parsedTime.TimeOfDay)
-$taskArguments = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -DaysThreshold {1}' -f `
-    $runnerScript, $DaysThreshold
+$taskArguments = `
+    '-NoProfile -ExecutionPolicy Bypass -File "{0}" -DaysThreshold {1} -OcrLanguage "{2}"' -f `
+    $runnerScript, $DaysThreshold, $OcrLanguage
 
 $taskAction = New-ScheduledTaskAction `
     -Execute $powerShellPath `
@@ -68,13 +72,13 @@ $scheduledTask = New-ScheduledTask `
     -Settings $settings `
     -Principal $principal
 
-if ($PSCmdlet.ShouldProcess($taskName, "Register daily expiration check")) {
+if ($PSCmdlet.ShouldProcess($taskName, "Register daily document maintenance")) {
     Register-ScheduledTask `
         -TaskName $taskName `
         -InputObject $scheduledTask `
         -Force | Out-Null
     Write-Output (
-        "Scheduled task '{0}' was installed for {1} with a daily check at {2}." -f `
+        "Scheduled task '{0}' was installed for {1} with daily maintenance at {2}." -f `
             $taskName, $currentUser, $CheckTime
     )
 }

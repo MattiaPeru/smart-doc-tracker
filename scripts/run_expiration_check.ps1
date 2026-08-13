@@ -7,7 +7,10 @@ param(
     [int]$DockerTimeoutSeconds = 120,
 
     [ValidateRange(10, 300)]
-    [int]$MongoTimeoutSeconds = 60
+    [int]$MongoTimeoutSeconds = 60,
+
+    [ValidatePattern("^[A-Za-z][A-Za-z0-9_+.-]*$")]
+    [string]$OcrLanguage = "eng"
 )
 
 Set-StrictMode -Version Latest
@@ -135,5 +138,7 @@ $dockerCli = Resolve-DockerCli
 Start-DockerDaemon -DockerCli $dockerCli -TimeoutSeconds $DockerTimeoutSeconds
 Start-MongoService -DockerCli $dockerCli -TimeoutSeconds $MongoTimeoutSeconds
 
-& $pythonPath $mainScript --check-expirations --days-threshold $DaysThreshold
+& $pythonPath $mainScript `
+    --days-threshold $DaysThreshold `
+    --language $OcrLanguage
 exit $LASTEXITCODE

@@ -48,6 +48,45 @@ The command prints the MongoDB document ID, SHA-256 source-file hash, insertion
 status, and validated document data. Repeating it with the same file returns
 `"inserted": false` and does not create a duplicate.
 
+## Inbox automation
+
+Place supported image documents in `data/inbox`, then run the complete local
+pipeline with:
+
+```powershell
+python src/main.py --process-inbox --language ita
+```
+
+The startup scanner creates `data/inbox` and `data/processed` when needed. Each
+supported file goes through OCR, validated local Ollama parsing, and idempotent
+MongoDB storage before it is moved to `data/processed`. A failed file remains in
+the inbox for inspection or retry, and unsupported entries are left untouched.
+If a processed filename already exists, the scanner selects a numbered filename
+instead of overwriting it.
+
+The command prints aggregate counts only; it does not log filenames, OCR text,
+or extracted fields. Use custom local folders when needed:
+
+```powershell
+python src/main.py --process-inbox --inbox-dir D:\Docs\inbox --processed-dir D:\Docs\processed
+```
+
+## Run the complete pipeline now
+
+With MongoDB already available on the local loopback interface, one command runs
+the complete application workflow: connect to MongoDB, process the inbox, store
+and archive valid documents, then send expiration notifications for the selected
+inclusive window:
+
+```powershell
+python src/main.py --days-threshold 30 --language ita
+```
+
+Only `--days-threshold` is required. The OCR language defaults to `eng`, while
+the inbox and processed folders default to `data/inbox` and `data/processed`.
+The expiration check still runs when an individual inbox document fails, and the
+command returns a non-zero exit code after reporting the aggregate results.
+
 List all documents stored by this project:
 
 ```powershell
@@ -135,11 +174,11 @@ remain local to the host.
 
 ### Automatic Windows task
 
-Install a Windows Scheduled Task that performs the one-shot check every day at
-09:00, independently of VS Code:
+Install a Windows Scheduled Task that performs the complete pipeline every day
+at 09:00, independently of VS Code:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\manage_expiration_task.ps1 Install -CheckTime 09:00 -DaysThreshold 30
+powershell -ExecutionPolicy Bypass -File scripts\manage_expiration_task.ps1 Install -CheckTime 09:00 -DaysThreshold 30 -OcrLanguage ita
 ```
 
 The task runs as the current interactive Windows user so desktop notifications
@@ -147,12 +186,14 @@ can be displayed. It is configured to run as soon as possible after startup and
 sign-in when the scheduled time was missed, and it may wake a sleeping computer.
 A fully powered-off computer cannot run the check until it is started.
 
-Before checking expirations, the scheduled runner verifies the Docker daemon. If
-needed, it starts Docker Desktop and waits up to two minutes for it to become
-ready. It then starts the project MongoDB service, without permitting an image
-pull, and waits for a successful local database ping. The expiration check runs
-only after both services are ready. Docker Desktop and the MongoDB image must
-already be installed locally.
+The scheduled runner verifies the Docker daemon. If needed, it starts Docker
+Desktop and waits up to two minutes for it to become ready. It then starts the
+project MongoDB service, without permitting an image pull, and waits for a
+successful local database ping. Immediately after MongoDB is ready, it processes
+the current inbox with the configured OCR language and then checks expirations.
+An inbox failure does not suppress expiration reminders, but the scheduled task
+still reports a failed result. Docker Desktop, the MongoDB image, Tesseract,
+Ollama, and the selected local model must already be installed locally.
 
 Running the install command again updates the existing task. Remove it with:
 

@@ -10,6 +10,7 @@ from unittest import TestCase
 from core.ocr import OCRInputError
 from core.parser import DocumentParsingError
 from db.database import DocumentInsertResult, StoredDocument
+from inbox import LocalDocumentFolders
 from models.document import DocumentData
 from notifier.desktop import ExpirationNotification
 from main import run
@@ -244,24 +245,30 @@ class MainTests(TestCase):
         repository = FakeRepository([record])
 
         list_stdout = StringIO()
+        list_stderr = StringIO()
         list_exit_code = run(
             ["--list-stored"],
             repository_factory=lambda: repository,
             stdout=list_stdout,
-            stderr=StringIO(),
+            stderr=list_stderr,
         )
         get_stdout = StringIO()
+        get_stderr = StringIO()
         get_exit_code = run(
             ["--get-stored", record.id],
             repository_factory=lambda: repository,
             stdout=get_stdout,
-            stderr=StringIO(),
+            stderr=get_stderr,
         )
 
         self.assertEqual(list_exit_code, 0)
         self.assertEqual(json.loads(list_stdout.getvalue())[0]["id"], record.id)
         self.assertEqual(get_exit_code, 0)
         self.assertEqual(json.loads(get_stdout.getvalue())["id"], record.id)
+        self.assertIn("[1/1] Reading stored documents", list_stderr.getvalue())
+        self.assertIn("[1/1] Database read completed", list_stderr.getvalue())
+        self.assertIn("[1/1] Reading the stored document", get_stderr.getvalue())
+        self.assertIn("[1/1] Database read completed", get_stderr.getvalue())
 
     def test_store_requires_structured_output(self) -> None:
         stderr = StringIO()
@@ -287,13 +294,14 @@ class MainTests(TestCase):
         repository = FakeRepository([record])
         notifier = FakeNotifier()
         stdout = StringIO()
+        stderr = StringIO()
 
         exit_code = run(
             ["--check-expirations", "--days-threshold", "21"],
             repository_factory=lambda: repository,
             notifier=notifier,
             stdout=stdout,
-            stderr=StringIO(),
+            stderr=stderr,
         )
 
         self.assertEqual(exit_code, 0)
@@ -303,6 +311,8 @@ class MainTests(TestCase):
         )
         self.assertEqual(repository.expiration_calls[0][0], 21)
         self.assertEqual(len(notifier.notifications), 1)
+        self.assertIn("[1/1] Checking documents expiring", stderr.getvalue())
+        self.assertIn("[1/1] Expiration check completed", stderr.getvalue())
 
     def test_run_schedules_daily_expiration_monitor(self) -> None:
         repository = FakeRepository([])
@@ -326,3 +336,144 @@ class MainTests(TestCase):
         self.assertEqual(scheduled_times, ["07:15:00"])
         self.assertIn("scheduled daily at 07:15", stderr.getvalue())
         self.assertIn("Daily expiration check completed", stderr.getvalue())
+
+    def test_run_processes_the_local_inbox(self) -> None:
+        repository = FakeRepository()
+        document = DocumentData(
+            document_type="invoice",
+            summary="A local invoice",
+            expiry_date=None,
+            issue_date="2026-08-01",
+            extracted_data={"invoice_number": "42"},
+        )
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            inbox = root / "inbox"
+            processed = root / "processed"
+            inbox.mkdir()
+            (inbox / "invoice.png").write_bytes(b"offline image fixture")
+            stdout = StringIO()
+            stderr = StringIO()
+
+            exit_code = run(
+                [
+                    "--process-inbox",
+                    "--inbox-dir",
+                    str(inbox),
+                    "--processed-dir",
+                    str(processed),
+                    "--language",
+                    "ita",
+                ],
+                ocr=FakeOCR("raw local text"),
+                document_parser=FakeParser(document),
+                repository_factory=lambda: repository,
+                stdout=stdout,
+                stderr=stderr,
+            )
+
+            self.assertTrue((processed / "invoice.png").is_file())
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            json.loads(stdout.getvalue()),
+            {
+                "discovered": 1,
+                "processed": 1,
+                "already_present": 0,
+                "failed": 0,
+                "skipped": 0,
+            },
+        )
+        self.assertIn("completed for 1 file(s)", stderr.getvalue())
+
+    def test_days_threshold_runs_the_complete_local_pipeline(self) -> None:
+        repository = FakeRepository()
+        notifier = FakeNotifier()
+        document = DocumentData(
+            document_type="insurance_policy",
+            summary="A local insurance policy",
+            expiry_date="2026-08-30",
+            issue_date="2025-08-30",
+            extracted_data={"policy_number": "42"},
+        )
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            inbox = root / "inbox"
+            processed = root / "processed"
+            inbox.mkdir()
+            (inbox / "policy.png").write_bytes(b"offline image fixture")
+            stdout = StringIO()
+            stderr = StringIO()
+
+            exit_code = run(
+                ["--days-threshold", "21", "--language", "ita"],
+                ocr=FakeOCR("raw local text"),
+                document_parser=FakeParser(document),
+                repository_factory=lambda: repository,
+                notifier=notifier,
+                folders_factory=lambda _inbox, _processed: LocalDocumentFolders(
+                    inbox,
+                    processed,
+                ),
+                stdout=stdout,
+                stderr=stderr,
+            )
+
+            self.assertTrue((processed / "policy.png").is_file())
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["inbox"]["processed"], 1)
+        self.assertEqual(payload["expirations"]["documents_found"], 1)
+        self.assertEqual(repository.expiration_calls[0][0], 21)
+        self.assertEqual(len(notifier.notifications), 1)
+        self.assertIn("[1/2] Scanning and processing", stderr.getvalue())
+        self.assertIn("[1/2] Inbox processing completed", stderr.getvalue())
+        self.assertIn("[2/2] Checking documents expiring", stderr.getvalue())
+        self.assertIn("[2/2] Expiration check completed", stderr.getvalue())
+
+    def test_complete_pipeline_checks_expirations_after_inbox_failure(self) -> None:
+        stored = StoredDocument(
+            id="64b64b64b64b64b64b64b64b",
+            file_hash="a" * 64,
+            document=DocumentData(
+                document_type="identity_card",
+                summary="A stored identity card",
+                expiry_date="2026-08-30",
+                issue_date=None,
+                extracted_data={},
+            ),
+            created_at=datetime(2026, 8, 11, 12, 0, tzinfo=UTC),
+        )
+        repository = FakeRepository([stored])
+        notifier = FakeNotifier()
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            inbox = root / "inbox"
+            inbox.mkdir()
+            failed_file = inbox / "unreadable.png"
+            failed_file.write_bytes(b"invalid image")
+
+            exit_code = run(
+                ["--days-threshold", "30"],
+                ocr=FakeOCR(error=OCRInputError("The image could not be processed.")),
+                document_parser=FakeParser(stored.document),
+                repository_factory=lambda: repository,
+                notifier=notifier,
+                folders_factory=lambda _inbox, _processed: LocalDocumentFolders(
+                    inbox,
+                    root / "processed",
+                ),
+                stdout=StringIO(),
+                stderr=StringIO(),
+            )
+
+            self.assertTrue(failed_file.is_file())
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(repository.expiration_calls[0][0], 30)
+        self.assertEqual(len(notifier.notifications), 1)

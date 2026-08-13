@@ -71,8 +71,10 @@ local-ai-doc-vault/
 *   Set up `APScheduler` to run the expiration check automatically on a daily basis.
 
 ### Phase 5: Pipeline Automation
+**Status: Implemented.**
+
 *   Establish the `data/inbox` directory structure.
-*   Implement a file system watcher (e.g., using `watchdog`) or a startup scanner that monitors the inbox folder.
+*   Implement a startup scanner that processes the files currently in the inbox folder.
 *   Connect the full pipeline: new file detected -> OCR -> Hybrid LLM Understanding -> MongoDB Insertion -> Move file to `data/processed`.
 
 ## 5. Known Edge Cases to Handle
@@ -82,6 +84,5 @@ local-ai-doc-vault/
 *   **Data Hygiene:** Any temporary image files generated during PDF-to-image conversion must be deleted immediately after OCR extraction.
 
 ## 6. Future Extensions (Scaling the Vault)
-*   **Dynamic Schema Pre-selection:** Upgrade the LLM pipeline to use explicit sub-schemas for highly frequent document types (e.g., `IDCardSchema`, `InvoiceSchema`) extending the base envelope, falling back to `Dict[str, Any]` for unknown types.
 *   **RAG Implementation (Chat with your Documents):** Store the extracted text, summaries, and dynamic JSON values in a local Vector DB (like `ChromaDB`) to enable natural language queries across all document types.
 *   **Local Web Dashboard:** Build a `Streamlit` or `FastAPI` interface to visualize documents, query dynamic JSON attributes, handle file uploads, and display color-coded expiration alerts.

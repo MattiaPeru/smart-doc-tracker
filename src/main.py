@@ -26,12 +26,15 @@ from infrastructure.ollama import (
     OllamaConnectionError,
     OllamaResponseError,
 )
+from inbox import InboxError, LocalDocumentFolders
 from models.document import DocumentData
 from notifier.desktop import DesktopNotificationError, PlyerDesktopNotifier
 from pipeline import (
     DocumentStoragePipeline,
     ExpirationCheckResult,
     ExpirationTrackingPipeline,
+    InboxProcessingPipeline,
+    InboxProcessingResult,
     NotificationSender,
 )
 from scheduler import (
@@ -77,11 +80,12 @@ class SchedulerRunner(Protocol):
 
 RepositoryFactory = Callable[[], RepositoryService]
 SchedulerFactory = Callable[[Callable[[], None], time], SchedulerRunner]
+DocumentFoldersFactory = Callable[[Path, Path], LocalDocumentFolders]
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Extract raw text from a local image with Tesseract OCR."
+        description="Run privacy-first local document processing workflows."
     )
     parser.add_argument("image", nargs="?", type=Path, help="Path to a local image file.")
     parser.add_argument(
@@ -120,11 +124,31 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run the expiration check every day in the foreground.",
     )
+    operation_group.add_argument(
+        "--process-inbox",
+        action="store_true",
+        help="Process all supported images currently in the local inbox.",
+    )
+    parser.add_argument(
+        "--inbox-dir",
+        type=Path,
+        default=Path("data/inbox"),
+        help="Local inbox folder used by automated processing (default: data/inbox).",
+    )
+    parser.add_argument(
+        "--processed-dir",
+        type=Path,
+        default=Path("data/processed"),
+        help="Local archive folder for processed files (default: data/processed).",
+    )
     parser.add_argument(
         "--days-threshold",
         type=_non_negative_integer,
-        default=30,
-        help="Inclusive expiration window in days (default: 30).",
+        default=None,
+        help=(
+            "Run the complete inbox and expiration pipeline using this inclusive "
+            "expiration window. Expiration-only modes default to 30 days."
+        ),
     )
     parser.add_argument(
         "--check-time",
@@ -154,11 +178,13 @@ def run(
     repository_factory: RepositoryFactory | None = None,
     notifier: NotificationSender | None = None,
     scheduler_factory: SchedulerFactory | None = None,
+    folders_factory: DocumentFoldersFactory = LocalDocumentFolders,
     stdout: TextIO = sys.stdout,
     stderr: TextIO = sys.stderr,
 ) -> int:
     args = build_parser().parse_args(argv)
     create_repository = repository_factory or MongoDocumentRepository.connect
+    days_threshold = args.days_threshold if args.days_threshold is not None else 30
 
     if args.list_stored:
         return _list_stored_documents(create_repository, stdout=stdout, stderr=stderr)
@@ -173,7 +199,7 @@ def run(
         return _check_expirations(
             create_repository,
             notifier or PlyerDesktopNotifier(),
-            days_threshold=args.days_threshold,
+            days_threshold=days_threshold,
             stdout=stdout,
             stderr=stderr,
         )
@@ -181,9 +207,39 @@ def run(
         return _monitor_expirations(
             create_repository,
             notifier or PlyerDesktopNotifier(),
-            days_threshold=args.days_threshold,
+            days_threshold=days_threshold,
             check_time=args.check_time,
             scheduler_factory=scheduler_factory,
+            stderr=stderr,
+        )
+    if args.process_inbox:
+        return _process_inbox(
+            create_repository,
+            ocr or TesseractOCR(),
+            document_parser,
+            language=args.language,
+            model=args.model,
+            ollama_url=args.ollama_url,
+            inbox_dir=args.inbox_dir,
+            processed_dir=args.processed_dir,
+            folders_factory=folders_factory,
+            stdout=stdout,
+            stderr=stderr,
+        )
+    if args.image is None and args.days_threshold is not None:
+        return _run_complete_pipeline(
+            create_repository,
+            ocr or TesseractOCR(),
+            document_parser,
+            notifier or PlyerDesktopNotifier(),
+            days_threshold=days_threshold,
+            language=args.language,
+            model=args.model,
+            ollama_url=args.ollama_url,
+            inbox_dir=args.inbox_dir,
+            processed_dir=args.processed_dir,
+            folders_factory=folders_factory,
+            stdout=stdout,
             stderr=stderr,
         )
     if args.image is None:
@@ -275,11 +331,21 @@ def _list_stored_documents(
     stderr: TextIO,
 ) -> int:
     try:
+        print(
+            "[1/1] Reading stored documents from local MongoDB...",
+            file=stderr,
+            flush=True,
+        )
         with repository_factory() as repository:
             documents = repository.get_all_documents()
     except (DatabaseConfigurationError, DatabaseError) as exc:
         print(f"Database read failed: {exc}", file=stderr)
         return 1
+    print(
+        f"[1/1] Database read completed ({len(documents)} document(s)).",
+        file=stderr,
+        flush=True,
+    )
     stdout.write(json.dumps([_serialize_stored(item) for item in documents], indent=2))
     stdout.write("\n")
     return 0
@@ -293,6 +359,11 @@ def _get_stored_document(
     stderr: TextIO,
 ) -> int:
     try:
+        print(
+            "[1/1] Reading the stored document from local MongoDB...",
+            file=stderr,
+            flush=True,
+        )
         with repository_factory() as repository:
             document = repository.get_document_by_id(document_id)
     except (DatabaseConfigurationError, DatabaseError) as exc:
@@ -301,6 +372,7 @@ def _get_stored_document(
     if document is None:
         print("Stored document not found.", file=stderr)
         return 1
+    print("[1/1] Database read completed.", file=stderr, flush=True)
     stdout.write(json.dumps(_serialize_stored(document), indent=2))
     stdout.write("\n")
     return 0
@@ -315,6 +387,11 @@ def _check_expirations(
     stderr: TextIO,
 ) -> int:
     try:
+        print(
+            f"[1/1] Checking documents expiring within {days_threshold} day(s)...",
+            file=stderr,
+            flush=True,
+        )
         result = _perform_expiration_check(
             repository_factory,
             notifier,
@@ -323,6 +400,13 @@ def _check_expirations(
     except (DatabaseConfigurationError, DatabaseError, DesktopNotificationError) as exc:
         print(f"Expiration check failed: {exc}", file=stderr)
         return 1
+    print(
+        "[1/1] Expiration check completed: "
+        f"{result.documents_found} document(s), "
+        f"{result.notifications_sent} notification(s).",
+        file=stderr,
+        flush=True,
+    )
     stdout.write(json.dumps(_serialize_expiration_result(result), indent=2))
     stdout.write("\n")
     return 0
@@ -390,6 +474,161 @@ def _perform_expiration_check(
         return ExpirationTrackingPipeline(repository, notifier).check(days_threshold)
 
 
+def _process_inbox(
+    repository_factory: RepositoryFactory,
+    ocr: OCRService,
+    document_parser: ParserService | None,
+    *,
+    language: str,
+    model: str,
+    ollama_url: str,
+    inbox_dir: Path,
+    processed_dir: Path,
+    folders_factory: DocumentFoldersFactory,
+    stdout: TextIO,
+    stderr: TextIO,
+) -> int:
+    try:
+        parser_service = document_parser or DocumentParser(
+            OllamaClient(base_url=ollama_url, model=model)
+        )
+        folders = folders_factory(inbox_dir, processed_dir)
+        print(
+            "[1/1] Scanning and processing the local document inbox...",
+            file=stderr,
+            flush=True,
+        )
+        with repository_factory() as repository:
+            result = InboxProcessingPipeline(
+                ocr=ocr,
+                parser=parser_service,
+                repository=repository,
+                folders=folders,
+                language=language,
+            ).process()
+    except (
+        InboxError,
+        DatabaseConfigurationError,
+        DatabaseError,
+        OllamaConfigurationError,
+    ) as exc:
+        print(f"Inbox processing failed: {exc}", file=stderr)
+        return 1
+
+    stdout.write(json.dumps(_serialize_inbox_result(result), indent=2))
+    stdout.write("\n")
+    if result.failed:
+        print(
+            f"[1/1] Inbox processing completed with {result.failed} failed file(s).",
+            file=stderr,
+            flush=True,
+        )
+        return 1
+    print(
+        f"[1/1] Inbox processing completed for {result.processed} file(s).",
+        file=stderr,
+        flush=True,
+    )
+    return 0
+
+
+def _run_complete_pipeline(
+    repository_factory: RepositoryFactory,
+    ocr: OCRService,
+    document_parser: ParserService | None,
+    notifier: NotificationSender,
+    *,
+    days_threshold: int,
+    language: str,
+    model: str,
+    ollama_url: str,
+    inbox_dir: Path,
+    processed_dir: Path,
+    folders_factory: DocumentFoldersFactory,
+    stdout: TextIO,
+    stderr: TextIO,
+) -> int:
+    try:
+        parser_service = document_parser or DocumentParser(
+            OllamaClient(base_url=ollama_url, model=model)
+        )
+        folders = folders_factory(inbox_dir, processed_dir)
+        print("Starting the complete local document pipeline...", file=stderr, flush=True)
+        with repository_factory() as repository:
+            try:
+                print(
+                    "[1/2] Scanning and processing the local document inbox...",
+                    file=stderr,
+                    flush=True,
+                )
+                inbox_result = InboxProcessingPipeline(
+                    ocr=ocr,
+                    parser=parser_service,
+                    repository=repository,
+                    folders=folders,
+                    language=language,
+                ).process()
+                print(
+                    "[1/2] Inbox processing completed: "
+                    f"{inbox_result.processed} processed, "
+                    f"{inbox_result.already_present} already present, "
+                    f"{inbox_result.failed} failed.",
+                    file=stderr,
+                    flush=True,
+                )
+            except InboxError as exc:
+                print(f"Inbox processing failed: {exc}", file=stderr)
+                inbox_result = InboxProcessingResult(
+                    discovered=0,
+                    processed=0,
+                    already_present=0,
+                    failed=1,
+                    skipped=0,
+                )
+
+            print(
+                f"[2/2] Checking documents expiring within {days_threshold} day(s)...",
+                file=stderr,
+                flush=True,
+            )
+            expiration_result = ExpirationTrackingPipeline(
+                repository,
+                notifier,
+            ).check(days_threshold)
+            print(
+                "[2/2] Expiration check completed: "
+                f"{expiration_result.documents_found} document(s), "
+                f"{expiration_result.notifications_sent} notification(s).",
+                file=stderr,
+                flush=True,
+            )
+    except (
+        DatabaseConfigurationError,
+        DatabaseError,
+        DesktopNotificationError,
+        OllamaConfigurationError,
+    ) as exc:
+        print(f"Complete pipeline failed: {exc}", file=stderr)
+        return 1
+
+    stdout.write(
+        json.dumps(
+            {
+                "inbox": _serialize_inbox_result(inbox_result),
+                "expirations": _serialize_expiration_result(expiration_result),
+            },
+            indent=2,
+        )
+    )
+    stdout.write("\n")
+    print(
+        "Complete local document pipeline finished.",
+        file=stderr,
+        flush=True,
+    )
+    return 1 if inbox_result.failed else 0
+
+
 def _serialize_insert_result(result: DocumentInsertResult) -> dict[str, object]:
     return {"inserted": result.inserted, **_serialize_stored(result.record)}
 
@@ -407,6 +646,16 @@ def _serialize_expiration_result(result: ExpirationCheckResult) -> dict[str, int
     return {
         "documents_found": result.documents_found,
         "notifications_sent": result.notifications_sent,
+    }
+
+
+def _serialize_inbox_result(result: InboxProcessingResult) -> dict[str, int]:
+    return {
+        "discovered": result.discovered,
+        "processed": result.processed,
+        "already_present": result.already_present,
+        "failed": result.failed,
+        "skipped": result.skipped,
     }
 
 

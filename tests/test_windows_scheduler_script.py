@@ -19,6 +19,7 @@ class WindowsSchedulerScriptTests(TestCase):
         self.assertIn("scripts\\run_expiration_check.ps1", script)
         self.assertIn("-ExecutionPolicy Bypass -File", script)
         self.assertIn("-DaysThreshold", script)
+        self.assertIn("-OcrLanguage", script)
         self.assertIn("-WorkingDirectory $projectRoot", script)
 
     def test_task_recovers_missed_runs_and_supports_uninstall(self) -> None:
@@ -29,16 +30,24 @@ class WindowsSchedulerScriptTests(TestCase):
         self.assertIn("Unregister-ScheduledTask", script)
         self.assertIn('[ValidateSet("Install", "Uninstall")]', script)
 
-    def test_runner_starts_local_services_before_expiration_check(self) -> None:
+    def test_runner_starts_services_before_the_complete_pipeline(self) -> None:
         script = RUNNER_SCRIPT_PATH.read_text(encoding="utf-8")
 
         docker_position = script.index("Start-DockerDaemon -DockerCli")
         mongo_position = script.index("Start-MongoService -DockerCli")
-        check_position = script.index("--check-expirations --days-threshold")
+        pipeline_position = script.index("--days-threshold $DaysThreshold")
         self.assertLess(docker_position, mongo_position)
-        self.assertLess(mongo_position, check_position)
+        self.assertLess(mongo_position, pipeline_position)
         self.assertIn("up -d --pull never mongodb", script)
         self.assertIn("db.adminCommand('ping')", script)
+        self.assertIn("--language $OcrLanguage", script)
+
+    def test_runner_invokes_main_once_for_daily_processing(self) -> None:
+        script = RUNNER_SCRIPT_PATH.read_text(encoding="utf-8")
+
+        self.assertEqual(script.count("& $pythonPath $mainScript"), 1)
+        self.assertNotIn("--process-inbox", script)
+        self.assertNotIn("--check-expirations", script)
 
     def test_runner_uses_only_loopback_project_services(self) -> None:
         script = RUNNER_SCRIPT_PATH.read_text(encoding="utf-8")
