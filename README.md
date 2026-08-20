@@ -219,5 +219,5 @@ offline test suite with:
 
 ```powershell
 $env:PYTHONPATH = "src"
-.venv\Scripts\python.exe -m unittest discover -s tests -v
+.venv\Scripts\python.exe -m unittest discover -s tests -t . -v
 ```

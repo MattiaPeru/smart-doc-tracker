@@ -5,10 +5,10 @@ from unittest import TestCase
 
 
 MANAGER_SCRIPT_PATH = (
-    Path(__file__).resolve().parents[1] / "scripts" / "manage_expiration_task.ps1"
+    Path(__file__).resolve().parents[2] / "scripts" / "manage_expiration_task.ps1"
 )
 RUNNER_SCRIPT_PATH = (
-    Path(__file__).resolve().parents[1] / "scripts" / "run_expiration_check.ps1"
+    Path(__file__).resolve().parents[2] / "scripts" / "run_expiration_check.ps1"
 )
 
 
