@@ -27,13 +27,17 @@ class OCRProcessingError(RuntimeError):
 class ImageLoader(Protocol):
     """Open a local image and return a managed image resource."""
 
-    def __call__(self, path: Path) -> AbstractContextManager[object]: ...
+    def __call__(self, path: Path) -> AbstractContextManager[object]:
+        """Open an image as a managed resource."""
+        ...
 
 
 class TextReader(Protocol):
     """Extract text from a decoded image."""
 
-    def __call__(self, image: object, *, lang: str) -> str: ...
+    def __call__(self, image: object, *, lang: str) -> str:
+        """Extract text from a decoded image using the requested language."""
+        ...
 
 
 class TesseractOCR:
@@ -44,6 +48,7 @@ class TesseractOCR:
         image_loader: ImageLoader | None = None,
         text_reader: TextReader | None = None,
     ) -> None:
+        """Configure injectable local image loading and OCR operations."""
         self._image_loader = image_loader or _open_image
         self._text_reader = text_reader or _read_with_tesseract
 
@@ -62,6 +67,7 @@ class TesseractOCR:
 
 
 def _validate_input(path: Path) -> None:
+    """Validate that a path identifies a supported local image."""
     if not path.exists():
         raise OCRInputError("The input image does not exist.")
     if not path.is_file():
@@ -71,6 +77,7 @@ def _validate_input(path: Path) -> None:
 
 
 def _open_image(path: Path) -> AbstractContextManager[object]:
+    """Open a local image through Pillow."""
     try:
         from PIL import Image
     except ImportError as exc:
@@ -80,6 +87,7 @@ def _open_image(path: Path) -> AbstractContextManager[object]:
 
 
 def _read_with_tesseract(image: object, *, lang: str) -> str:
+    """Extract raw text from an image through local Tesseract."""
     try:
         import pytesseract
     except ImportError as exc:

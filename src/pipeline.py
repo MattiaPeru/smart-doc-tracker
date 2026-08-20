@@ -40,12 +40,16 @@ class DocumentWriter(Protocol):
 
     def insert_document(
         self, document: DocumentData, *, file_hash: str
-    ) -> DocumentInsertResult: ...
+    ) -> DocumentInsertResult:
+        """Persist one validated document using its content hash."""
+        ...
     def upsert_document_sections(
         self,
         document_id: str,
         sections: Sequence[StructuredDocumentSection],
-    ) -> None: ...
+    ) -> None:
+        """Persist structured page sections for one document."""
+        ...
 
 
 FileHasher = Callable[[str | Path], str]
@@ -56,25 +60,33 @@ class ExpiringDocumentReader(Protocol):
 
     def get_expiring_documents(
         self, days_threshold: int, *, today: date | None = None
-    ) -> list[StoredDocument]: ...
+    ) -> list[StoredDocument]:
+        """Return documents expiring within an inclusive date window."""
+        ...
 
 
 class NotificationSender(Protocol):
     """Narrow interface for sending prepared local notifications."""
 
-    def send(self, notification: ExpirationNotification) -> None: ...
+    def send(self, notification: ExpirationNotification) -> None:
+        """Deliver one prepared local notification."""
+        ...
 
 
 class OCRExtractor(Protocol):
     """Narrow OCR interface required by inbox automation."""
 
-    def extract_text(self, image_path: str | Path, *, language: str = "eng") -> str: ...
+    def extract_text(self, image_path: str | Path, *, language: str = "eng") -> str:
+        """Extract raw text from one local image."""
+        ...
 
 
 class StructuredDocumentParser(Protocol):
     """Narrow structured parsing interface required by inbox automation."""
 
-    def parse(self, raw_text: str) -> DocumentData: ...
+    def parse(self, raw_text: str) -> DocumentData:
+        """Convert raw text into validated document data."""
+        ...
 
 
 class PDFPageExtractor(Protocol):
@@ -82,20 +94,28 @@ class PDFPageExtractor(Protocol):
 
     def extract_pages(
         self, pdf_path: str | Path, *, language: str = "eng"
-    ) -> tuple[ExtractedPage, ...]: ...
+    ) -> tuple[ExtractedPage, ...]:
+        """Extract page-aware text from one local PDF."""
+        ...
 
 
 class LongStructuredDocumentParser(Protocol):
     """Narrow page-aware parsing interface for long PDF documents."""
 
-    def parse_pages(self, pages: tuple[ExtractedPage, ...]) -> ParsedLongDocument: ...
+    def parse_pages(self, pages: tuple[ExtractedPage, ...]) -> ParsedLongDocument:
+        """Parse extracted pages into one structured document."""
+        ...
 
 
 class DocumentFolders(Protocol):
     """Narrow local file-management interface required by inbox automation."""
 
-    def scan(self) -> InboxScan: ...
-    def archive(self, source_path: str | Path) -> Path: ...
+    def scan(self) -> InboxScan:
+        """Return supported files currently available in the inbox."""
+        ...
+    def archive(self, source_path: str | Path) -> Path:
+        """Move a processed file into the local archive."""
+        ...
 
 
 @dataclass(slots=True)

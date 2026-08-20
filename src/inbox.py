@@ -37,6 +37,7 @@ class LocalDocumentFolders:
         inbox_path: str | Path = Path("data/inbox"),
         processed_path: str | Path = Path("data/processed"),
     ) -> None:
+        """Configure local inbox and processed-folder paths."""
         self.inbox_path = Path(inbox_path).expanduser()
         self.processed_path = Path(processed_path).expanduser()
 
@@ -86,6 +87,7 @@ class LocalDocumentFolders:
         return destination
 
     def _ensure_directories(self) -> None:
+        """Create and validate the configured local directories."""
         try:
             inbox = self.inbox_path.resolve()
             processed = self.processed_path.resolve()
@@ -99,6 +101,7 @@ class LocalDocumentFolders:
             raise InboxError("The local document folders could not be created.") from exc
 
     def _available_destination(self, filename: str) -> Path:
+        """Return a collision-free destination in the processed folder."""
         candidate = self.processed_path / filename
         if not candidate.exists():
             return candidate

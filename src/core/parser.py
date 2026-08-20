@@ -83,7 +83,9 @@ CHUNK_USER_PROMPT_SUFFIX = "\n</document_part>"
 class TextGenerator(Protocol):
     """Narrow local generation interface used by the parser."""
 
-    def generate(self, *, system_prompt: str, user_prompt: str) -> str: ...
+    def generate(self, *, system_prompt: str, user_prompt: str) -> str:
+        """Generate text from system and user prompts using a local model."""
+        ...
 
 
 class DocumentParsingError(ValueError):
@@ -92,6 +94,7 @@ class DocumentParsingError(ValueError):
     def __init__(
         self, message: str, *, generated_response: str | None = None
     ) -> None:
+        """Create a sanitized parsing error with optional private source output."""
         super().__init__(message)
         self.generated_response = generated_response
 
@@ -100,6 +103,7 @@ class DocumentParser:
     """Prompt a local generator and validate its output."""
 
     def __init__(self, generator: TextGenerator, *, max_ocr_characters: int = 50_000) -> None:
+        """Configure the local generator and maximum accepted OCR length."""
         if max_ocr_characters <= 0:
             raise ValueError("max_ocr_characters must be positive")
         self._generator = generator
@@ -139,6 +143,7 @@ class LongDocumentParser:
         max_chunk_characters: int = 12_000,
         progress_callback: Callable[[int, int], None] | None = None,
     ) -> None:
+        """Configure bounded parsing and optional progress reporting."""
         if max_chunk_characters < 1_000:
             raise ValueError("max_chunk_characters must be at least 1000")
         self._generator = generator
@@ -178,6 +183,7 @@ class LongDocumentParser:
 
 
 def _validate_generated_document(generated: str) -> DocumentData:
+    """Decode generated JSON and validate it as document data."""
     try:
         payload = _decode_json_object(generated)
         return DocumentData.model_validate(payload)
@@ -191,6 +197,7 @@ def _validate_generated_document(generated: str) -> DocumentData:
 def _chunk_pages(
     pages: tuple[ExtractedPage, ...], *, max_characters: int
 ) -> tuple[DocumentTextChunk, ...]:
+    """Group page text into bounded, page-aware chunks."""
     parts: list[tuple[int, str]] = []
     for page in pages:
         text = page.text.strip()
@@ -217,6 +224,7 @@ def _chunk_pages(
 
 
 def _split_text(text: str, *, max_characters: int) -> tuple[str, ...]:
+    """Split oversized text at natural boundaries when possible."""
     segments: list[str] = []
     remaining = text.strip()
     while len(remaining) > max_characters:
@@ -237,6 +245,7 @@ def _split_text(text: str, *, max_characters: int) -> tuple[str, ...]:
 def _build_chunk(
     chunk_number: int, parts: list[tuple[int, str]]
 ) -> DocumentTextChunk:
+    """Build one numbered chunk from page-numbered text parts."""
     return DocumentTextChunk(
         chunk_number=chunk_number,
         page_from=min(page_number for page_number, _text in parts),
@@ -248,6 +257,7 @@ def _build_chunk(
 def _merge_section_documents(
     sections: list[StructuredDocumentSection],
 ) -> DocumentData:
+    """Consolidate validated section documents without inventing values."""
     documents = [section.document for section in sections]
     document_type = _most_common(item.document_type for item in documents)
     issue_date = _most_common_date(item.issue_date for item in documents)
@@ -295,11 +305,13 @@ def _merge_section_documents(
 
 
 def _most_common(values: Iterable[str]) -> str:
+    """Return the most frequent string from a non-empty iterable."""
     candidates = list(values)
     return Counter(candidates).most_common(1)[0][0]
 
 
 def _most_common_date(values: Iterable[date | None]) -> date | None:
+    """Return the most frequent available date or None."""
     candidates = [value for value in values if value is not None]
     if not candidates:
         return None
@@ -309,6 +321,7 @@ def _most_common_date(values: Iterable[date | None]) -> date | None:
 def _merge_mappings(
     existing: dict[str, object], incoming: dict[str, object]
 ) -> dict[str, object]:
+    """Recursively merge two extracted-data mappings."""
     merged = dict(existing)
     for key, incoming_value in incoming.items():
         if key not in merged:
@@ -319,6 +332,7 @@ def _merge_mappings(
 
 
 def _merge_values(existing: object, incoming: object) -> object:
+    """Merge equal, nested, or conflicting extracted values."""
     if existing == incoming:
         return existing
     if isinstance(existing, dict) and isinstance(incoming, dict):
@@ -332,6 +346,7 @@ def _merge_values(existing: object, incoming: object) -> object:
 
 
 def _decode_json_object(value: str) -> dict[str, object]:
+    """Decode exactly one JSON object from local model output."""
     candidate = value.strip()
     if candidate.startswith("```"):
         lines = candidate.splitlines()
@@ -356,6 +371,7 @@ def _decode_json_object(value: str) -> dict[str, object]:
 
 
 def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """Build a JSON object while rejecting duplicate keys."""
     result: dict[str, object] = {}
     for key, value in pairs:
         if key in result:
@@ -365,4 +381,5 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
 
 
 def _reject_non_finite_number(value: str) -> object:
+    """Reject non-finite numeric tokens encountered during JSON decoding."""
     raise ValueError(f"Generated JSON contains a non-finite number: {value}")

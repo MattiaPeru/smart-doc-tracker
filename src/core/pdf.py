@@ -43,6 +43,7 @@ class LocalPDFTextExtractor:
         *,
         minimum_text_characters: int = 20,
     ) -> None:
+        """Configure page reading and the OCR fallback threshold."""
         if minimum_text_characters < 0:
             raise ValueError("minimum_text_characters cannot be negative")
         self._page_reader = page_reader or _read_pages_with_pymupdf
@@ -74,6 +75,7 @@ class LocalPDFTextExtractor:
 
 
 def _validate_pdf_input(path: Path) -> None:
+    """Validate that a path identifies a supported local PDF."""
     if not path.exists():
         raise PDFInputError("The input PDF does not exist.")
     if not path.is_file():
@@ -87,6 +89,7 @@ def _read_pages_with_pymupdf(
     language: str,
     minimum_text_characters: int,
 ) -> tuple[ExtractedPage, ...]:
+    """Read PDF pages locally and OCR pages with insufficient text."""
     try:
         import pymupdf
     except ImportError as exc:

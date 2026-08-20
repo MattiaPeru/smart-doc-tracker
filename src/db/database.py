@@ -53,10 +53,18 @@ class DocumentInsertResult:
 class DocumentCollection(Protocol):
     """Subset of a MongoDB collection used by the repository."""
 
-    def create_index(self, keys: Any, **kwargs: Any) -> str: ...
-    def update_one(self, filter: dict[str, Any], update: dict[str, Any], **kwargs: Any) -> Any: ...
-    def find_one(self, filter: dict[str, Any]) -> dict[str, Any] | None: ...
-    def find(self, filter: dict[str, Any]) -> Any: ...
+    def create_index(self, keys: Any, **kwargs: Any) -> str:
+        """Create an index for the collection."""
+        ...
+    def update_one(self, filter: dict[str, Any], update: dict[str, Any], **kwargs: Any) -> Any:
+        """Update or upsert one matching record."""
+        ...
+    def find_one(self, filter: dict[str, Any]) -> dict[str, Any] | None:
+        """Return one matching record when present."""
+        ...
+    def find(self, filter: dict[str, Any]) -> Any:
+        """Return a cursor over matching records."""
+        ...
 
 
 class MongoDocumentRepository:
@@ -69,6 +77,7 @@ class MongoDocumentRepository:
         sections_collection: DocumentCollection | None = None,
         client: MongoClient[dict[str, Any]] | None = None,
     ) -> None:
+        """Configure document collections and an optional owned client."""
         self._collection = collection
         self._sections_collection = sections_collection
         self._client = client
@@ -132,9 +141,11 @@ class MongoDocumentRepository:
             self._client.close()
 
     def __enter__(self) -> MongoDocumentRepository:
+        """Return this repository for context-managed use."""
         return self
 
     def __exit__(self, *args: object) -> None:
+        """Close the owned client when leaving the context."""
         self.close()
 
     def insert_document(
@@ -257,6 +268,7 @@ class MongoDocumentRepository:
         return self._find_documents({f"extracted_data.{field_key}": field_value})
 
     def _find_documents(self, query: dict[str, Any]) -> list[StoredDocument]:
+        """Execute a query and convert results into domain records."""
         try:
             cursor = self._collection.find(query).sort(
                 [("created_at", ASCENDING), ("_id", ASCENDING)]
@@ -267,6 +279,7 @@ class MongoDocumentRepository:
 
 
 def _validate_local_mongodb_uri(uri: str) -> str:
+    """Validate a credential-free loopback MongoDB URI."""
     parsed = urlsplit(uri)
     if (
         parsed.scheme != "mongodb"
@@ -292,6 +305,7 @@ def _validate_local_mongodb_uri(uri: str) -> str:
 
 
 def _validate_mongodb_name(value: str, *, label: str) -> None:
+    """Validate a database or collection name."""
     if not value or not re.fullmatch(r"[A-Za-z0-9_-]+", value):
         raise DatabaseConfigurationError(
             f"{label} must contain only letters, numbers, underscores, or hyphens"
@@ -299,6 +313,7 @@ def _validate_mongodb_name(value: str, *, label: str) -> None:
 
 
 def _validate_file_hash(value: str) -> str:
+    """Normalize and validate a SHA-256 file hash."""
     normalized = value.strip().lower()
     if not _SHA256.fullmatch(normalized):
         raise ValueError("file_hash must be a 64-character SHA-256 hexadecimal digest")
@@ -306,18 +321,21 @@ def _validate_file_hash(value: str) -> str:
 
 
 def _date_to_datetime(value: date | None) -> datetime | None:
+    """Convert a date to a UTC midnight datetime."""
     if value is None:
         return None
     return datetime.combine(value, time.min, tzinfo=UTC)
 
 
 def _normalize_datetime(value: datetime) -> datetime:
+    """Require timezone information and normalize a datetime to UTC."""
     if value.tzinfo is None:
         raise ValueError("created_at must include timezone information")
     return value.astimezone(UTC)
 
 
 def _to_stored_document(payload: dict[str, Any]) -> StoredDocument:
+    """Convert one database payload into a validated stored document."""
     try:
         document_payload = {
             key: payload[key]

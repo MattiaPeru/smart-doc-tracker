@@ -21,7 +21,9 @@ class ExpirationNotification:
 class PlyerNotificationBackend(Protocol):
     """Subset of the plyer notification backend used by this adapter."""
 
-    def notify(self, **kwargs: Any) -> None: ...
+    def notify(self, **kwargs: Any) -> None:
+        """Deliver one native desktop notification."""
+        ...
 
 
 class PlyerDesktopNotifier:
@@ -34,6 +36,7 @@ class PlyerDesktopNotifier:
         app_name: str = "Smart Doc Tracker",
         timeout_seconds: int = 10,
     ) -> None:
+        """Configure the local notification backend and display options."""
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
         self._backend = backend
@@ -59,6 +62,7 @@ class PlyerDesktopNotifier:
 
 
 def _load_plyer_backend() -> PlyerNotificationBackend:
+    """Load the locally installed plyer notification backend."""
     try:
         from plyer import notification
     except ImportError as exc:

@@ -25,9 +25,15 @@ class OllamaResponseError(RuntimeError):
 class HTTPResponse(Protocol):
     """Subset of an HTTP response used by the adapter."""
 
-    def __enter__(self) -> HTTPResponse: ...
-    def __exit__(self, *args: object) -> None: ...
-    def read(self) -> bytes: ...
+    def __enter__(self) -> HTTPResponse:
+        """Open the response context."""
+        ...
+    def __exit__(self, *args: object) -> None:
+        """Close the response context."""
+        ...
+    def read(self) -> bytes:
+        """Read the complete response body."""
+        ...
 
 
 Transport = Callable[..., HTTPResponse]
@@ -46,6 +52,7 @@ class OllamaClient:
         timeout_seconds: float = 120.0,
         transport: Transport = urlopen,
     ) -> None:
+        """Configure a loopback-only Ollama generation client."""
         self._base_url = _validate_loopback_url(base_url)
         if not model.strip():
             raise OllamaConfigurationError("The Ollama model name cannot be empty.")
@@ -103,6 +110,7 @@ class OllamaClient:
 
 
 def _validate_loopback_url(base_url: str) -> str:
+    """Validate and normalize a safe loopback-only Ollama URL."""
     parsed = urlparse(base_url)
     if (
         parsed.scheme != "http"

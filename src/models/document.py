@@ -64,6 +64,7 @@ class DocumentData(BaseModel):
 
     @classmethod
     def _validate_mapping_keys(cls, value: object) -> None:
+        """Recursively validate dynamic keys and JSON-compatible values."""
         if isinstance(value, dict):
             for key, nested_value in value.items():
                 if not isinstance(key, str) or not _SNAKE_CASE_KEY.fullmatch(key):
@@ -88,6 +89,7 @@ class StructuredDocumentSection:
     document: DocumentData
 
     def __post_init__(self) -> None:
+        """Validate chunk numbering and the associated page range."""
         if self.chunk_number <= 0:
             raise ValueError("chunk_number must be positive")
         if self.page_from <= 0 or self.page_to < self.page_from:
@@ -102,5 +104,6 @@ class ParsedLongDocument:
     sections: tuple[StructuredDocumentSection, ...]
 
     def __post_init__(self) -> None:
+        """Require at least one structured section in a parsed document."""
         if not self.sections:
             raise ValueError("A parsed long document must contain sections")

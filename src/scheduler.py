@@ -18,8 +18,12 @@ class SchedulerError(RuntimeError):
 class BlockingSchedulerBackend(Protocol):
     """Subset of APScheduler used by the daily task runner."""
 
-    def add_job(self, function: Callable[[], None], **kwargs: Any) -> Any: ...
-    def start(self) -> None: ...
+    def add_job(self, function: Callable[[], None], **kwargs: Any) -> Any:
+        """Register a callable with scheduler-specific options."""
+        ...
+    def start(self) -> None:
+        """Start the blocking scheduler loop."""
+        ...
 
 
 def parse_daily_time(value: str) -> time:
@@ -45,6 +49,7 @@ class DailyTaskScheduler:
         check_time: time,
         backend: BlockingSchedulerBackend | None = None,
     ) -> None:
+        """Configure a task, its daily execution time, and scheduler backend."""
         self._task = task
         self._check_time = check_time
         self._backend = backend
@@ -71,6 +76,7 @@ class DailyTaskScheduler:
 
 
 def _load_scheduler_backend() -> BlockingSchedulerBackend:
+    """Load the locally installed APScheduler backend."""
     try:
         from apscheduler.schedulers.blocking import BlockingScheduler
     except ImportError as exc:
