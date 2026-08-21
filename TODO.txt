@@ -3,7 +3,7 @@
 Giudizio finale
 Il codice dimostra buone pratiche superiori a quelle di un normale prototipo: responsabilità separate, tipi, validazione agli ingressi, dependency injection, gestione controllata degli errori e test deterministici.
 Le priorità consigliate sono:
-suddividere main.py;
+suddividere main.py;   OK
 eliminare il contenuto generato dalle eccezioni;
 sistemare packaging e namespace;
 aggiungere Ruff, type checking e coverage.
