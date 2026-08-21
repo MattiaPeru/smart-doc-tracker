@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from collections.abc import Sequence
-from typing import Any, Protocol
+from typing import Any
 from urllib.parse import urlsplit
 
 from bson import ObjectId
@@ -14,6 +14,7 @@ from pymongo import ASCENDING, MongoClient
 from pymongo.collection import Collection
 from pymongo.errors import DuplicateKeyError, PyMongoError
 
+from interfaces.document_collection import DocumentCollection
 from models.document import DocumentData, StructuredDocumentSection
 
 
@@ -48,23 +49,6 @@ class DocumentInsertResult:
 
     record: StoredDocument
     inserted: bool
-
-
-class DocumentCollection(Protocol):
-    """Subset of a MongoDB collection used by the repository."""
-
-    def create_index(self, keys: Any, **kwargs: Any) -> str:
-        """Create an index for the collection."""
-        ...
-    def update_one(self, filter: dict[str, Any], update: dict[str, Any], **kwargs: Any) -> Any:
-        """Update or upsert one matching record."""
-        ...
-    def find_one(self, filter: dict[str, Any]) -> dict[str, Any] | None:
-        """Return one matching record when present."""
-        ...
-    def find(self, filter: dict[str, Any]) -> Any:
-        """Return a cursor over matching records."""
-        ...
 
 
 class MongoDocumentRepository:

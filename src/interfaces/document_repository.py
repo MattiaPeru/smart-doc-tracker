@@ -1,4 +1,4 @@
-"""Repository interfaces shared by document controllers and CLI composition."""
+"""Persistence and query interface for local documents."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from models.document import DocumentData, StructuredDocumentSection
 
 
 class DocumentRepository(Protocol):
-    """Expose direct persistence and query operations for local documents."""
+    """Persist and query validated local documents."""
 
     def __enter__(self) -> DocumentRepository:
         """Open the repository context."""
@@ -27,7 +27,15 @@ class DocumentRepository(Protocol):
         *,
         file_hash: str,
     ) -> DocumentInsertResult:
-        """Persist one validated document using its file hash."""
+        """Persist one validated document using its content hash."""
+        ...
+
+    def upsert_document_sections(
+        self,
+        document_id: str,
+        sections: Sequence[StructuredDocumentSection],
+    ) -> None:
+        """Persist structured page sections for one document."""
         ...
 
     def get_all_documents(self) -> list[StoredDocument]:
@@ -44,13 +52,5 @@ class DocumentRepository(Protocol):
         *,
         today: date | None = None,
     ) -> list[StoredDocument]:
-        """Return documents expiring within the requested window."""
-        ...
-
-    def upsert_document_sections(
-        self,
-        document_id: str,
-        sections: Sequence[StructuredDocumentSection],
-    ) -> None:
-        """Persist structured sections for one document."""
+        """Return documents expiring within an inclusive date window."""
         ...

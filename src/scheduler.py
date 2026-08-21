@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import time
-from typing import Any, Protocol
+
+from interfaces.blocking_scheduler_backend import BlockingSchedulerBackend
 
 
 class SchedulerConfigurationError(ValueError):
@@ -13,17 +14,6 @@ class SchedulerConfigurationError(ValueError):
 
 class SchedulerError(RuntimeError):
     """Raised when the local scheduler cannot run."""
-
-
-class BlockingSchedulerBackend(Protocol):
-    """Subset of APScheduler used by the daily task runner."""
-
-    def add_job(self, function: Callable[[], None], **kwargs: Any) -> Any:
-        """Register a callable with scheduler-specific options."""
-        ...
-    def start(self) -> None:
-        """Start the blocking scheduler loop."""
-        ...
 
 
 def parse_daily_time(value: str) -> time:
@@ -44,25 +34,25 @@ class DailyTaskScheduler:
 
     def __init__(
         self,
+        backend: BlockingSchedulerBackend | None = None,
+    ) -> None:
+        """Configure the local scheduler backend."""
+        self._backend = backend
+
+    def run(
+        self,
         task: Callable[[], None],
         *,
         check_time: time,
-        backend: BlockingSchedulerBackend | None = None,
     ) -> None:
-        """Configure a task, its daily execution time, and scheduler backend."""
-        self._task = task
-        self._check_time = check_time
-        self._backend = backend
-
-    def run(self) -> None:
-        """Register the daily task and block until the process is interrupted."""
+        """Register one daily task and block until the process is interrupted."""
         scheduler = self._backend or _load_scheduler_backend()
         try:
             scheduler.add_job(
-                self._task,
+                task,
                 trigger="cron",
-                hour=self._check_time.hour,
-                minute=self._check_time.minute,
+                hour=check_time.hour,
+                minute=check_time.minute,
                 id="daily_expiration_check",
                 replace_existing=True,
                 coalesce=True,

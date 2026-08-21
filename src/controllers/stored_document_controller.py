@@ -6,7 +6,6 @@ from dataclasses import dataclass
 
 from cli.dependencies import CliDependencies
 from cli.serializer import JsonResultSerializer
-from controllers.document_manager import DocumentManager
 from db.database import DatabaseConfigurationError, DatabaseError, MongoDocumentRepository
 
 
@@ -29,7 +28,7 @@ class StoredDocumentController:
                 dependencies.repository_factory or MongoDocumentRepository.connect
             )
             with create_repository() as repository:
-                documents = DocumentManager(repository).get_all_documents()
+                documents = repository.get_all_documents()
         except (DatabaseConfigurationError, DatabaseError) as exc:
             print(f"Database read failed: {exc}", file=dependencies.stderr)
             return 1
@@ -58,7 +57,7 @@ class StoredDocumentController:
                 dependencies.repository_factory or MongoDocumentRepository.connect
             )
             with create_repository() as repository:
-                document = DocumentManager(repository).get_document_by_id(document_id)
+                document = repository.get_document_by_id(document_id)
         except (DatabaseConfigurationError, DatabaseError) as exc:
             print(f"Database read failed: {exc}", file=dependencies.stderr)
             return 1

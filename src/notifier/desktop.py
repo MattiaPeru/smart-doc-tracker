@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol
+
+from interfaces.plyer_notification_backend import PlyerNotificationBackend
 
 
 class DesktopNotificationError(RuntimeError):
@@ -16,14 +17,6 @@ class ExpirationNotification:
 
     title: str
     message: str
-
-
-class PlyerNotificationBackend(Protocol):
-    """Subset of the plyer notification backend used by this adapter."""
-
-    def notify(self, **kwargs: Any) -> None:
-        """Deliver one native desktop notification."""
-        ...
 
 
 class PlyerDesktopNotifier:

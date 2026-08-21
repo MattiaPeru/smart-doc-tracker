@@ -7,10 +7,9 @@ from datetime import time
 
 from cli.dependencies import CliDependencies
 from cli.serializer import JsonResultSerializer
-from controllers.document_manager import DocumentManager
-from controllers.expiration_controller import ExpirationController
 from db.database import DatabaseConfigurationError, DatabaseError, MongoDocumentRepository
 from notifier.desktop import DesktopNotificationError, PlyerDesktopNotifier
+from pipeline import ExpirationTrackingPipeline
 from scheduler import DailyTaskScheduler, SchedulerConfigurationError, SchedulerError
 
 
@@ -34,8 +33,8 @@ class ExpirationWorkflowController:
             )
             notifier = dependencies.notifier or PlyerDesktopNotifier()
             with create_repository() as repository:
-                result = ExpirationController(
-                    DocumentManager(repository),
+                result = ExpirationTrackingPipeline(
+                    repository,
                     notifier,
                 ).check(days_threshold)
         except (
@@ -76,8 +75,8 @@ class ExpirationWorkflowController:
             """Execute one scheduled expiration check and report its outcome."""
             try:
                 with create_repository() as repository:
-                    result = ExpirationController(
-                        DocumentManager(repository),
+                    result = ExpirationTrackingPipeline(
+                        repository,
                         notifier,
                     ).check(days_threshold)
                 print(
@@ -98,19 +97,14 @@ class ExpirationWorkflowController:
                     flush=True,
                 )
 
-        create_scheduler = dependencies.scheduler_factory or (
-            lambda task, scheduled_time: DailyTaskScheduler(
-                task,
-                check_time=scheduled_time,
-            )
-        )
+        scheduler = dependencies.scheduler or DailyTaskScheduler()
         print(
             f"Expiration monitoring scheduled daily at {check_time.strftime('%H:%M')}.",
             file=dependencies.stderr,
             flush=True,
         )
         try:
-            create_scheduler(scheduled_check, check_time).run()
+            scheduler.run(scheduled_check, check_time=check_time)
         except KeyboardInterrupt:
             print("Expiration monitoring stopped.", file=dependencies.stderr)
             return 0

@@ -23,11 +23,10 @@ class DailyTaskSchedulerTests(TestCase):
         backend = FakeSchedulerBackend()
         task = lambda: None
 
-        DailyTaskScheduler(
+        DailyTaskScheduler(backend=backend).run(
             task,
             check_time=parse_daily_time("08:45"),
-            backend=backend,
-        ).run()
+        )
 
         self.assertTrue(backend.started)
         self.assertEqual(backend.jobs[0][0], task)

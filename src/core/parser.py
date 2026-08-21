@@ -8,9 +8,9 @@ from collections.abc import Iterable
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
-from typing import Protocol
 
 from core.pdf import ExtractedPage
+from interfaces.text_generator import TextGenerator
 from models.document import DocumentData, ParsedLongDocument, StructuredDocumentSection
 
 
@@ -78,14 +78,6 @@ Return JSON only, without Markdown or commentary."""
 
 CHUNK_USER_PROMPT_PREFIX = "Extract data from these document pages:\n<document_part>\n"
 CHUNK_USER_PROMPT_SUFFIX = "\n</document_part>"
-
-
-class TextGenerator(Protocol):
-    """Narrow local generation interface used by the parser."""
-
-    def generate(self, *, system_prompt: str, user_prompt: str) -> str:
-        """Generate text from system and user prompts using a local model."""
-        ...
 
 
 class DocumentParsingError(ValueError):

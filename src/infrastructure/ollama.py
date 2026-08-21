@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from typing import Any, Protocol
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
+
+from interfaces.http_response import HTTPResponse
 
 
 class OllamaConfigurationError(ValueError):
@@ -20,20 +22,6 @@ class OllamaConnectionError(RuntimeError):
 
 class OllamaResponseError(RuntimeError):
     """Raised when Ollama returns an invalid response."""
-
-
-class HTTPResponse(Protocol):
-    """Subset of an HTTP response used by the adapter."""
-
-    def __enter__(self) -> HTTPResponse:
-        """Open the response context."""
-        ...
-    def __exit__(self, *args: object) -> None:
-        """Close the response context."""
-        ...
-    def read(self) -> bytes:
-        """Read the complete response body."""
-        ...
 
 
 Transport = Callable[..., HTTPResponse]

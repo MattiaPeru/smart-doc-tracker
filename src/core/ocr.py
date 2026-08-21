@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from contextlib import AbstractContextManager
 from pathlib import Path
-from typing import Callable, Protocol
+
+from interfaces.image_loader import ImageLoader
+from interfaces.text_reader import TextReader
 
 
 SUPPORTED_IMAGE_EXTENSIONS = frozenset(
@@ -22,22 +24,6 @@ class OCRDependencyError(RuntimeError):
 
 class OCRProcessingError(RuntimeError):
     """Raised when a local image cannot be decoded or processed."""
-
-
-class ImageLoader(Protocol):
-    """Open a local image and return a managed image resource."""
-
-    def __call__(self, path: Path) -> AbstractContextManager[object]:
-        """Open an image as a managed resource."""
-        ...
-
-
-class TextReader(Protocol):
-    """Extract text from a decoded image."""
-
-    def __call__(self, image: object, *, lang: str) -> str:
-        """Extract text from a decoded image using the requested language."""
-        ...
 
 
 class TesseractOCR:

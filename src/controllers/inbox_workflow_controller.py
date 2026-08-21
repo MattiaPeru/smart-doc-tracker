@@ -7,8 +7,6 @@ from dataclasses import dataclass
 
 from cli.dependencies import CliDependencies
 from cli.serializer import JsonResultSerializer
-from controllers.document_manager import DocumentManager
-from controllers.expiration_controller import ExpirationController
 from core.ocr import TesseractOCR
 from core.parser import DocumentParser, LongDocumentParser
 from core.pdf import LocalPDFTextExtractor
@@ -16,7 +14,11 @@ from db.database import DatabaseConfigurationError, DatabaseError, MongoDocument
 from infrastructure.ollama import OllamaClient, OllamaConfigurationError
 from inbox import InboxError
 from notifier.desktop import DesktopNotificationError, PlyerDesktopNotifier
-from pipeline import InboxProcessingPipeline, InboxProcessingResult
+from pipeline import (
+    ExpirationTrackingPipeline,
+    InboxProcessingPipeline,
+    InboxProcessingResult,
+)
 
 
 @dataclass(slots=True)
@@ -153,8 +155,8 @@ class InboxWorkflowController:
                     file=dependencies.stderr,
                     flush=True,
                 )
-                expiration_result = ExpirationController(
-                    DocumentManager(repository),
+                expiration_result = ExpirationTrackingPipeline(
+                    repository,
                     dependencies.notifier or PlyerDesktopNotifier(),
                 ).check(days_threshold)
                 print(

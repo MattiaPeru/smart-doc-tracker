@@ -134,12 +134,13 @@ class FakeNotifier:
 
 
 class ImmediateScheduler:
-    def __init__(self, task: object) -> None:
-        self.task = task
+    def __init__(self) -> None:
+        self.scheduled_times: list[str] = []
 
-    def run(self) -> None:
-        assert callable(self.task)
-        self.task()
+    def run(self, task: object, *, check_time: object) -> None:
+        self.scheduled_times.append(str(check_time))
+        assert callable(task)
+        task()
 
 
 class MainTests(TestCase):
@@ -384,23 +385,19 @@ class MainTests(TestCase):
     def test_run_schedules_daily_expiration_monitor(self) -> None:
         repository = FakeRepository([])
         stderr = StringIO()
-        scheduled_times: list[str] = []
-
-        def create_scheduler(task: object, check_time: object) -> ImmediateScheduler:
-            scheduled_times.append(str(check_time))
-            return ImmediateScheduler(task)
+        scheduler = ImmediateScheduler()
 
         exit_code = run(
             ["--monitor-expirations", "--check-time", "07:15"],
             repository_factory=lambda: repository,
             notifier=FakeNotifier(),
-            scheduler_factory=create_scheduler,
+            scheduler=scheduler,
             stdout=StringIO(),
             stderr=stderr,
         )
 
         self.assertEqual(exit_code, 0)
-        self.assertEqual(scheduled_times, ["07:15:00"])
+        self.assertEqual(scheduler.scheduled_times, ["07:15:00"])
         self.assertIn("scheduled daily at 07:15", stderr.getvalue())
         self.assertIn("Daily expiration check completed", stderr.getvalue())
 
