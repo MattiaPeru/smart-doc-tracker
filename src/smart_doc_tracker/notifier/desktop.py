@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import cast
 
 from ..interfaces.plyer_notification_backend import PlyerNotificationBackend
 
@@ -62,4 +63,4 @@ def _load_plyer_backend() -> PlyerNotificationBackend:
         raise DesktopNotificationError(
             "Desktop notifications require the locally installed plyer package."
         ) from exc
-    return notification
+    return cast(PlyerNotificationBackend, notification)

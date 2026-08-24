@@ -7,7 +7,11 @@ from datetime import time
 
 from ..cli.dependencies import CliDependencies
 from ..cli.serializer import JsonResultSerializer
-from ..db.database import DatabaseConfigurationError, DatabaseError, MongoDocumentRepository
+from ..db.database import (
+    DatabaseConfigurationError,
+    DatabaseError,
+    MongoDocumentRepository,
+)
 from ..notifier.desktop import DesktopNotificationError, PlyerDesktopNotifier
 from ..pipeline import ExpirationTrackingPipeline
 from ..scheduler import DailyTaskScheduler, SchedulerConfigurationError, SchedulerError

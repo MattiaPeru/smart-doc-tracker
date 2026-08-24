@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
-from collections.abc import Sequence
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlsplit
 
 from bson import ObjectId
@@ -16,7 +16,6 @@ from pymongo.errors import DuplicateKeyError, PyMongoError
 
 from ..interfaces.document_collection import DocumentCollection
 from ..models.document import DocumentData, StructuredDocumentSection
-
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _FIELD_PATH = re.compile(
@@ -114,8 +113,8 @@ class MongoDocumentRepository:
             client.close()
             raise DatabaseError("The local MongoDB service is unavailable.") from exc
         return cls(
-            collection,
-            sections_collection=sections_collection,
+            cast(DocumentCollection, collection),
+            sections_collection=cast(DocumentCollection, sections_collection),
             client=client,
         )
 
@@ -164,7 +163,9 @@ class MongoDocumentRepository:
 
         if stored is None:
             raise DatabaseError("The stored document could not be retrieved.")
-        return DocumentInsertResult(record=_to_stored_document(stored), inserted=inserted)
+        return DocumentInsertResult(
+            record=_to_stored_document(stored), inserted=inserted
+        )
 
     def upsert_document_sections(
         self,
@@ -247,7 +248,9 @@ class MongoDocumentRepository:
     ) -> list[StoredDocument]:
         """Find documents by an exact value at a validated dynamic field path."""
         if not isinstance(field_key, str) or not _FIELD_PATH.fullmatch(field_key):
-            raise ValueError("field_key must be a dot-separated English snake_case path")
+            raise ValueError(
+                "field_key must be a dot-separated English snake_case path"
+            )
         DocumentData._validate_mapping_keys({"value": field_value})
         return self._find_documents({f"extracted_data.{field_key}": field_value})
 
@@ -275,12 +278,15 @@ def _validate_local_mongodb_uri(uri: str) -> str:
         or parsed.fragment
     ):
         raise DatabaseConfigurationError(
-            "MongoDB must use a loopback endpoint without credentials, options, or a path."
+            "MongoDB must use a loopback endpoint without credentials, options, "
+            "or a path."
         )
     try:
         port = parsed.port
     except ValueError as exc:
-        raise DatabaseConfigurationError("The MongoDB endpoint has an invalid port.") from exc
+        raise DatabaseConfigurationError(
+            "The MongoDB endpoint has an invalid port."
+        ) from exc
     if port is None:
         raise DatabaseConfigurationError(
             "The MongoDB endpoint must include an explicit port."

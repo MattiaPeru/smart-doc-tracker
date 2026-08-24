@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
 from pathlib import Path
 
-from .core.file_hash import calculate_file_sha256
-from .core.file_hash import FileHashingError
+from .core.file_hash import FileHashingError, calculate_file_sha256
 from .core.ocr import OCRDependencyError, OCRInputError, OCRProcessingError
 from .core.parser import DocumentParsingError
 from .core.pdf import (
@@ -19,8 +17,7 @@ from .core.pdf import (
     PDFInputError,
     PDFProcessingError,
 )
-from .db.database import DatabaseError
-from .db.database import DocumentInsertResult
+from .db.database import DatabaseError, DocumentInsertResult
 from .inbox import InboxError
 from .infrastructure.ollama import (
     OllamaConfigurationError,
@@ -39,7 +36,6 @@ from .models.document import (
     StructuredDocumentSection,
 )
 from .notifier.desktop import ExpirationNotification
-
 
 FileHasher = Callable[[str | Path], str]
 

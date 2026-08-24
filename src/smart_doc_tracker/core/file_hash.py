@@ -10,7 +10,9 @@ class FileHashingError(RuntimeError):
     """Raised when a local document cannot be hashed safely."""
 
 
-def calculate_file_sha256(file_path: str | Path, *, chunk_size: int = 1024 * 1024) -> str:
+def calculate_file_sha256(
+    file_path: str | Path, *, chunk_size: int = 1024 * 1024
+) -> str:
     """Return the lowercase SHA-256 digest of a local file."""
     if chunk_size <= 0:
         raise ValueError("chunk_size must be positive")

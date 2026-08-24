@@ -6,7 +6,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-
 SUPPORTED_PDF_EXTENSIONS = frozenset({".pdf"})
 
 
@@ -99,7 +98,7 @@ def _read_pages_with_pymupdf(
 
     pages: list[ExtractedPage] = []
     try:
-        with pymupdf.open(path) as document:
+        with pymupdf.open(path) as document:  # type: ignore[no-untyped-call]
             if document.needs_pass:
                 raise PDFInputError("Password-protected PDFs are not supported.")
             for page_index, page in enumerate(document):

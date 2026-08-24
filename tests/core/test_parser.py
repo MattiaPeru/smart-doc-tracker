@@ -3,7 +3,11 @@ from __future__ import annotations
 import json
 from unittest import TestCase
 
-from smart_doc_tracker.core.parser import DocumentParser, DocumentParsingError, SYSTEM_PROMPT
+from smart_doc_tracker.core.parser import (
+    SYSTEM_PROMPT,
+    DocumentParser,
+    DocumentParsingError,
+)
 
 
 class FakeGenerator:
@@ -19,7 +23,9 @@ class FakeGenerator:
 class DocumentParserTests(TestCase):
     def test_system_prompt_contains_explicit_json_response_structure(self) -> None:
         self.assertIn('"document_type": "document_category"', SYSTEM_PROMPT)
-        self.assertIn('"summary": "A concise factual summary in English."', SYSTEM_PROMPT)
+        self.assertIn(
+            '"summary": "A concise factual summary in English."', SYSTEM_PROMPT
+        )
         self.assertIn('"expiry_date": "2030-12-31"', SYSTEM_PROMPT)
         self.assertIn('"issue_date": null', SYSTEM_PROMPT)
         self.assertIn('"extracted_data": {', SYSTEM_PROMPT)
@@ -27,7 +33,9 @@ class DocumentParserTests(TestCase):
         self.assertIn("Translate the semantic meaning", SYSTEM_PROMPT)
         self.assertIn('"nazionalità" becomes "nationality"', SYSTEM_PROMPT)
         self.assertIn("only lowercase ASCII", SYSTEM_PROMPT)
-        self.assertIn("Preserve the original language, accents, and Unicode", SYSTEM_PROMPT)
+        self.assertIn(
+            "Preserve the original language, accents, and Unicode", SYSTEM_PROMPT
+        )
 
     def test_parses_valid_generated_json(self) -> None:
         generator = FakeGenerator(

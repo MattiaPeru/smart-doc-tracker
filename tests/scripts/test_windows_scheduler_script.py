@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest import TestCase
 
-
 MANAGER_SCRIPT_PATH = (
     Path(__file__).resolve().parents[2] / "scripts" / "manage_expiration_task.ps1"
 )
@@ -64,8 +63,6 @@ class WindowsSchedulerScriptTests(TestCase):
         self.assertIn("$probeSucceeded = $LASTEXITCODE -eq 0", script)
         self.assertIn("$mongoIsReady = $LASTEXITCODE -eq 0", script)
         self.assertEqual(
-            script.count(
-                "$ErrorActionPreference = $previousErrorActionPreference"
-            ),
+            script.count("$ErrorActionPreference = $previousErrorActionPreference"),
             2,
         )

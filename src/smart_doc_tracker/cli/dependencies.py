@@ -18,7 +18,6 @@ from ..interfaces.pdf_page_extractor import PDFPageExtractor
 from ..interfaces.scheduler import Scheduler
 from ..interfaces.structured_document_parser import StructuredDocumentParser
 
-
 RepositoryFactory = Callable[[], DocumentRepository]
 DocumentFoldersFactory = Callable[[Path, Path], DocumentFolders]
 

@@ -3,7 +3,11 @@ from __future__ import annotations
 from typing import Any
 from unittest import TestCase
 
-from smart_doc_tracker.scheduler import DailyTaskScheduler, SchedulerConfigurationError, parse_daily_time
+from smart_doc_tracker.scheduler import (
+    DailyTaskScheduler,
+    SchedulerConfigurationError,
+    parse_daily_time,
+)
 
 
 class FakeSchedulerBackend:
@@ -21,7 +25,9 @@ class FakeSchedulerBackend:
 class DailyTaskSchedulerTests(TestCase):
     def test_registers_one_coalesced_daily_job(self) -> None:
         backend = FakeSchedulerBackend()
-        task = lambda: None
+
+        def task() -> None:
+            pass
 
         DailyTaskScheduler(backend=backend).run(
             task,

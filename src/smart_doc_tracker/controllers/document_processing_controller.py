@@ -8,7 +8,12 @@ from dataclasses import dataclass
 from ..cli.dependencies import CliDependencies
 from ..cli.serializer import JsonResultSerializer
 from ..core.file_hash import FileHashingError
-from ..core.ocr import OCRDependencyError, OCRInputError, OCRProcessingError, TesseractOCR
+from ..core.ocr import (
+    OCRDependencyError,
+    OCRInputError,
+    OCRProcessingError,
+    TesseractOCR,
+)
 from ..core.parser import DocumentParser, DocumentParsingError, LongDocumentParser
 from ..core.pdf import (
     LocalPDFTextExtractor,
@@ -16,7 +21,11 @@ from ..core.pdf import (
     PDFInputError,
     PDFProcessingError,
 )
-from ..db.database import DatabaseConfigurationError, DatabaseError, MongoDocumentRepository
+from ..db.database import (
+    DatabaseConfigurationError,
+    DatabaseError,
+    MongoDocumentRepository,
+)
 from ..infrastructure.ollama import (
     OllamaClient,
     OllamaConfigurationError,
@@ -85,8 +94,7 @@ class DocumentProcessingController:
                 long_parser = dependencies.long_document_parser or LongDocumentParser(
                     generator,
                     progress_callback=lambda current, total: print(
-                        f"[2/{total_steps}] Analyzing PDF section "
-                        f"{current}/{total}...",
+                        f"[2/{total_steps}] Analyzing PDF section {current}/{total}...",
                         file=stderr,
                         flush=True,
                     ),

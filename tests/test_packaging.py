@@ -6,7 +6,6 @@ from unittest import TestCase
 
 import smart_doc_tracker
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 

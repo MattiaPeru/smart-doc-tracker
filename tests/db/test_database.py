@@ -9,7 +9,10 @@ from unittest.mock import patch
 
 from bson import ObjectId
 
-from smart_doc_tracker.db.database import DatabaseConfigurationError, MongoDocumentRepository
+from smart_doc_tracker.db.database import (
+    DatabaseConfigurationError,
+    MongoDocumentRepository,
+)
 from smart_doc_tracker.models.document import DocumentData, StructuredDocumentSection
 
 
@@ -115,9 +118,7 @@ class MongoDocumentRepositoryTests(TestCase):
         self.assertEqual(first.record.id, second.record.id)
         self.assertEqual(len(self.collection.documents), 1)
         self.assertEqual(first.record.document.expiry_date, date(2030, 1, 10))
-        self.assertEqual(
-            first.record.document.extracted_data["policy_number"], "P-123"
-        )
+        self.assertEqual(first.record.document.extracted_data["policy_number"], "P-123")
         self.assertIsInstance(self.collection.documents[0]["expiry_date"], datetime)
 
     def test_get_document_by_id_and_get_all_documents(self) -> None:
@@ -143,9 +144,7 @@ class MongoDocumentRepositoryTests(TestCase):
             created_at=self.created_at,
         )
 
-        results = self.repository.get_expiring_documents(
-            2, today=date(2030, 1, 8)
-        )
+        results = self.repository.get_expiring_documents(2, today=date(2030, 1, 8))
 
         self.assertEqual(results, [expected])
         expiry_query = self.collection.queries[-1]["expiry_date"]

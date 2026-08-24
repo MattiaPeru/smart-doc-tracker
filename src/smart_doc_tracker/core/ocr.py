@@ -8,7 +8,6 @@ from pathlib import Path
 from ..interfaces.image_loader import ImageLoader
 from ..interfaces.text_reader import TextReader
 
-
 SUPPORTED_IMAGE_EXTENSIONS = frozenset(
     {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
 )
@@ -86,4 +85,6 @@ def _read_with_tesseract(image: object, *, lang: str) -> str:
             "The local Tesseract executable was not found on PATH."
         ) from exc
     except pytesseract.TesseractError as exc:
-        raise OCRProcessingError("Tesseract could not extract text from the image.") from exc
+        raise OCRProcessingError(
+            "Tesseract could not extract text from the image."
+        ) from exc

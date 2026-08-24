@@ -74,15 +74,16 @@ class CliArgumentParser:
             "--inbox-dir",
             type=Path,
             default=Path("data/inbox"),
-            help="Local inbox folder used by automated processing (default: data/inbox).",
+            help=(
+                "Local inbox folder used by automated processing (default: data/inbox)."
+            ),
         )
         parser.add_argument(
             "--processed-dir",
             type=Path,
             default=Path("data/processed"),
             help=(
-                "Local archive folder for processed files "
-                "(default: data/processed)."
+                "Local archive folder for processed files (default: data/processed)."
             ),
         )
         parser.add_argument(
@@ -119,9 +120,7 @@ class CliArgumentParser:
         try:
             parsed = int(value)
         except ValueError as exc:
-            raise argparse.ArgumentTypeError(
-                "must be a non-negative integer"
-            ) from exc
+            raise argparse.ArgumentTypeError("must be a non-negative integer") from exc
         if parsed < 0:
             raise argparse.ArgumentTypeError("must be a non-negative integer")
         return parsed

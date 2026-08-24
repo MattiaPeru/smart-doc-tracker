@@ -7,7 +7,10 @@ from unittest import TestCase
 
 from smart_doc_tracker.db.database import DocumentInsertResult, StoredDocument
 from smart_doc_tracker.models.document import DocumentData, StructuredDocumentSection
-from smart_doc_tracker.pipeline import DocumentProcessingPipeline, DocumentProcessingStage
+from smart_doc_tracker.pipeline import (
+    DocumentProcessingPipeline,
+    DocumentProcessingStage,
+)
 
 
 class FakeOCR:

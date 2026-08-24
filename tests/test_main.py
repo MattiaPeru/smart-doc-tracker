@@ -9,12 +9,16 @@ from unittest import TestCase
 
 from smart_doc_tracker.core.ocr import OCRInputError
 from smart_doc_tracker.core.parser import DocumentParsingError
+from smart_doc_tracker.core.pdf import ExtractedPage
 from smart_doc_tracker.db.database import DocumentInsertResult, StoredDocument
 from smart_doc_tracker.inbox import LocalDocumentFolders
-from smart_doc_tracker.core.pdf import ExtractedPage
-from smart_doc_tracker.models.document import DocumentData, ParsedLongDocument, StructuredDocumentSection
-from smart_doc_tracker.notifier.desktop import ExpirationNotification
 from smart_doc_tracker.main import run
+from smart_doc_tracker.models.document import (
+    DocumentData,
+    ParsedLongDocument,
+    StructuredDocumentSection,
+)
+from smart_doc_tracker.notifier.desktop import ExpirationNotification
 
 
 class FakeOCR:
@@ -85,9 +89,7 @@ class FakeRepository:
     ) -> list[StoredDocument]:
         self.expiration_calls.append((days_threshold, today))
         return [
-            item
-            for item in self.documents
-            if item.document.expiry_date is not None
+            item for item in self.documents if item.document.expiry_date is not None
         ]
 
     def upsert_document_sections(
@@ -170,9 +172,7 @@ class MainTests(TestCase):
         stderr = StringIO()
         ocr = FakeOCR(error=OCRInputError("The input image does not exist."))
 
-        exit_code = run(
-            ["private-filename.png"], ocr=ocr, stdout=stdout, stderr=stderr
-        )
+        exit_code = run(["private-filename.png"], ocr=ocr, stdout=stdout, stderr=stderr)
 
         self.assertEqual(exit_code, 1)
         self.assertEqual(stdout.getvalue(), "")
@@ -344,7 +344,9 @@ class MainTests(TestCase):
         exit_code = run(["sample.png", "--store"], stderr=stderr)
 
         self.assertEqual(exit_code, 2)
-        self.assertEqual(stderr.getvalue(), "Input error: --store requires --structured.\n")
+        self.assertEqual(
+            stderr.getvalue(), "Input error: --store requires --structured.\n"
+        )
 
     def test_run_checks_expirations_without_ocr(self) -> None:
         record = StoredDocument(

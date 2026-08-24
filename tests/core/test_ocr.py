@@ -34,14 +34,18 @@ class TesseractOCRTests(TestCase):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "missing.png"
             with self.assertRaises(OCRInputError):
-                TesseractOCR(fake_image_loader, lambda image, *, lang: "").extract_text(path)
+                TesseractOCR(fake_image_loader, lambda image, *, lang: "").extract_text(
+                    path
+                )
 
     def test_extract_text_rejects_unsupported_input(self) -> None:
         with TemporaryDirectory() as directory:
             path = Path(directory) / "unsupported.pdf"
             path.write_bytes(b"not an image")
             with self.assertRaises(OCRInputError):
-                TesseractOCR(fake_image_loader, lambda image, *, lang: "").extract_text(path)
+                TesseractOCR(fake_image_loader, lambda image, *, lang: "").extract_text(
+                    path
+                )
 
     def test_extract_text_wraps_image_processing_errors(self) -> None:
         with TemporaryDirectory() as directory:

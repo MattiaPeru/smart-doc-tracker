@@ -29,19 +29,23 @@ class DocumentWorkflowController:
 
         days_threshold = args.days_threshold if args.days_threshold is not None else 30
         if args.check_expirations:
-            return ExpirationWorkflowController(
-                self.dependencies
-            ).check_expirations(days_threshold)
+            return ExpirationWorkflowController(self.dependencies).check_expirations(
+                days_threshold
+            )
         if args.monitor_expirations:
-            return ExpirationWorkflowController(
-                self.dependencies
-            ).monitor_expirations(days_threshold, check_time=args.check_time)
+            return ExpirationWorkflowController(self.dependencies).monitor_expirations(
+                days_threshold, check_time=args.check_time
+            )
         if args.process_inbox:
             return InboxWorkflowController(self.dependencies).process_inbox(args)
         if args.image is None and args.days_threshold is not None:
-            return InboxWorkflowController(self.dependencies).run_complete_pipeline(args)
+            return InboxWorkflowController(self.dependencies).run_complete_pipeline(
+                args
+            )
         if args.image is None:
-            print("Input error: an image path is required.", file=self.dependencies.stderr)
+            print(
+                "Input error: an image path is required.", file=self.dependencies.stderr
+            )
             return 2
         if args.store and not args.structured:
             print(

@@ -218,8 +218,28 @@ Running the install command again updates the existing task. Remove it with:
 powershell -ExecutionPolicy Bypass -File scripts\manage_expiration_task.ps1 Uninstall
 ```
 
-Supported formats are BMP, JPEG, PNG, TIFF, WebP, and PDF. Run the deterministic,
-offline test suite with:
+Supported formats are BMP, JPEG, PNG, TIFF, WebP, and PDF.
+
+## Development checks
+
+Install the package and local development tools in the virtual environment:
+
+```powershell
+.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+```
+
+Run formatting, linting, static type checking, and the deterministic offline test
+suite with branch coverage:
+
+```powershell
+.venv\Scripts\python.exe -m ruff format --check .
+.venv\Scripts\python.exe -m ruff check .
+.venv\Scripts\python.exe -m mypy
+.venv\Scripts\python.exe -m pytest --cov --cov-report=term-missing
+```
+
+Coverage must remain at or above 80%. The existing standard-library test command
+remains available when only the test suite is needed:
 
 ```powershell
 .venv\Scripts\python.exe -m unittest discover -s tests -t . -v

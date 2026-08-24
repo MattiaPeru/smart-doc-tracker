@@ -9,7 +9,6 @@ from pathlib import Path
 from .core.ocr import SUPPORTED_IMAGE_EXTENSIONS
 from .core.pdf import SUPPORTED_PDF_EXTENSIONS
 
-
 SUPPORTED_DOCUMENT_EXTENSIONS = SUPPORTED_IMAGE_EXTENSIONS | SUPPORTED_PDF_EXTENSIONS
 
 
@@ -98,7 +97,9 @@ class LocalDocumentFolders:
         except InboxError:
             raise
         except OSError as exc:
-            raise InboxError("The local document folders could not be created.") from exc
+            raise InboxError(
+                "The local document folders could not be created."
+            ) from exc
 
     def _available_destination(self, filename: str) -> Path:
         """Return a collision-free destination in the processed folder."""

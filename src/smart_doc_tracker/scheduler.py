@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import time
+from typing import cast
 
 from .interfaces.blocking_scheduler_backend import BlockingSchedulerBackend
 
@@ -62,7 +63,9 @@ class DailyTaskScheduler:
         except KeyboardInterrupt:
             raise
         except Exception as exc:
-            raise SchedulerError("The local daily scheduler stopped unexpectedly.") from exc
+            raise SchedulerError(
+                "The local daily scheduler stopped unexpectedly."
+            ) from exc
 
 
 def _load_scheduler_backend() -> BlockingSchedulerBackend:
@@ -73,4 +76,4 @@ def _load_scheduler_backend() -> BlockingSchedulerBackend:
         raise SchedulerConfigurationError(
             "Daily scheduling requires the locally installed APScheduler package."
         ) from exc
-    return BlockingScheduler()
+    return cast(BlockingSchedulerBackend, BlockingScheduler())

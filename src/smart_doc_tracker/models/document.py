@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from math import isfinite
 from datetime import date, datetime
+from math import isfinite
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-
 _SNAKE_CASE_KEY = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 _DATE_FORMATS = ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d")
-_MISSING_DATE_VALUES = frozenset({"", "none", "null", "n/a", "unknown", "not_applicable"})
+_MISSING_DATE_VALUES = frozenset(
+    {"", "none", "null", "n/a", "unknown", "not_applicable"}
+)
 
 
 class DocumentData(BaseModel):
@@ -53,7 +54,9 @@ class DocumentData(BaseModel):
                 return datetime.strptime(candidate, date_format).date()
             except ValueError:
                 continue
-        raise ValueError("date values must use YYYY-MM-DD or a supported numeric format")
+        raise ValueError(
+            "date values must use YYYY-MM-DD or a supported numeric format"
+        )
 
     @field_validator("extracted_data")
     @classmethod

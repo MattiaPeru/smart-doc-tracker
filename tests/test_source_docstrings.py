@@ -21,4 +21,6 @@ class SourceDocstringTests(TestCase):
                         relative_path = source_path.relative_to(source_root.parent)
                         missing.append(f"{relative_path}:{node.lineno} ({node.name})")
 
-        self.assertEqual(missing, [], "Missing function docstrings:\n" + "\n".join(missing))
+        self.assertEqual(
+            missing, [], "Missing function docstrings:\n" + "\n".join(missing)
+        )

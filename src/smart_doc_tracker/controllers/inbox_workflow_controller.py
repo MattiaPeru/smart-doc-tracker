@@ -10,9 +10,13 @@ from ..cli.serializer import JsonResultSerializer
 from ..core.ocr import TesseractOCR
 from ..core.parser import DocumentParser, LongDocumentParser
 from ..core.pdf import LocalPDFTextExtractor
-from ..db.database import DatabaseConfigurationError, DatabaseError, MongoDocumentRepository
-from ..infrastructure.ollama import OllamaClient, OllamaConfigurationError
+from ..db.database import (
+    DatabaseConfigurationError,
+    DatabaseError,
+    MongoDocumentRepository,
+)
 from ..inbox import InboxError
+from ..infrastructure.ollama import OllamaClient, OllamaConfigurationError
 from ..notifier.desktop import DesktopNotificationError, PlyerDesktopNotifier
 from ..pipeline import (
     ExpirationTrackingPipeline,
@@ -77,7 +81,8 @@ class InboxWorkflowController:
         )
         if result.failed:
             print(
-                f"[1/1] Inbox processing completed with {result.failed} failed file(s).",
+                "[1/1] Inbox processing completed with "
+                f"{result.failed} failed file(s).",
                 file=dependencies.stderr,
                 flush=True,
             )

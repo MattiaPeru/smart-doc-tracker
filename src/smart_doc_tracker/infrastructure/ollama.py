@@ -47,7 +47,9 @@ class OllamaClient:
         if timeout_seconds <= 0:
             raise OllamaConfigurationError("The Ollama timeout must be positive.")
         if context_length <= 0:
-            raise OllamaConfigurationError("The Ollama context length must be positive.")
+            raise OllamaConfigurationError(
+                "The Ollama context length must be positive."
+            )
         if max_output_tokens <= 0 or max_output_tokens >= context_length:
             raise OllamaConfigurationError(
                 "The Ollama output limit must be positive and smaller than the context."
@@ -85,15 +87,21 @@ class OllamaClient:
             with self._transport(request, timeout=self._timeout_seconds) as response:
                 response_body = response.read()
         except (HTTPError, URLError, OSError) as exc:
-            raise OllamaConnectionError("The local Ollama service is unavailable.") from exc
+            raise OllamaConnectionError(
+                "The local Ollama service is unavailable."
+            ) from exc
 
         try:
             payload: Any = json.loads(response_body.decode("utf-8"))
             generated_text = payload["response"]
         except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError) as exc:
-            raise OllamaResponseError("The local Ollama service returned an invalid response.") from exc
+            raise OllamaResponseError(
+                "The local Ollama service returned an invalid response."
+            ) from exc
         if not isinstance(generated_text, str) or not generated_text.strip():
-            raise OllamaResponseError("The local Ollama service returned an empty response.")
+            raise OllamaResponseError(
+                "The local Ollama service returned an empty response."
+            )
         return generated_text
 
 
@@ -110,12 +118,17 @@ def _validate_loopback_url(base_url: str) -> str:
         or parsed.path not in {"", "/"}
     ):
         raise OllamaConfigurationError(
-            "Ollama must use a plain HTTP loopback endpoint without credentials or a path."
+            "Ollama must use a plain HTTP loopback endpoint without credentials "
+            "or a path."
         )
     try:
         port = parsed.port
     except ValueError as exc:
-        raise OllamaConfigurationError("The Ollama endpoint has an invalid port.") from exc
+        raise OllamaConfigurationError(
+            "The Ollama endpoint has an invalid port."
+        ) from exc
     if port is None:
-        raise OllamaConfigurationError("The Ollama endpoint must include an explicit port.")
+        raise OllamaConfigurationError(
+            "The Ollama endpoint must include an explicit port."
+        )
     return base_url.rstrip("/")

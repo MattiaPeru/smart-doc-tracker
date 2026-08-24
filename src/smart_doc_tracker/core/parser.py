@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from collections.abc import Iterable
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import date
 
 from ..core.pdf import ExtractedPage
 from ..interfaces.text_generator import TextGenerator
-from ..models.document import DocumentData, ParsedLongDocument, StructuredDocumentSection
-
+from ..models.document import (
+    DocumentData,
+    ParsedLongDocument,
+    StructuredDocumentSection,
+)
 
 SYSTEM_PROMPT = """You extract structured information from OCR text locally.
 Return exactly one JSON object using this structure:
@@ -83,9 +85,7 @@ CHUNK_USER_PROMPT_SUFFIX = "\n</document_part>"
 class DocumentParsingError(ValueError):
     """Raised when generated output cannot become a valid document model."""
 
-    def __init__(
-        self, message: str, *, generated_response: str | None = None
-    ) -> None:
+    def __init__(self, message: str, *, generated_response: str | None = None) -> None:
         """Create a sanitized parsing error with optional private source output."""
         super().__init__(message)
         self.generated_response = generated_response
@@ -94,7 +94,9 @@ class DocumentParsingError(ValueError):
 class DocumentParser:
     """Prompt a local generator and validate its output."""
 
-    def __init__(self, generator: TextGenerator, *, max_ocr_characters: int = 50_000) -> None:
+    def __init__(
+        self, generator: TextGenerator, *, max_ocr_characters: int = 50_000
+    ) -> None:
         """Configure the local generator and maximum accepted OCR length."""
         if max_ocr_characters <= 0:
             raise ValueError("max_ocr_characters must be positive")
@@ -234,9 +236,7 @@ def _split_text(text: str, *, max_characters: int) -> tuple[str, ...]:
     return tuple(segments)
 
 
-def _build_chunk(
-    chunk_number: int, parts: list[tuple[int, str]]
-) -> DocumentTextChunk:
+def _build_chunk(chunk_number: int, parts: list[tuple[int, str]]) -> DocumentTextChunk:
     """Build one numbered chunk from page-numbered text parts."""
     return DocumentTextChunk(
         chunk_number=chunk_number,
@@ -271,7 +271,9 @@ def _merge_section_documents(
     if len(document_types) > 1:
         extracted_data["document_type_candidates"] = document_types
     issue_dates = list(
-        dict.fromkeys(item.issue_date for item in documents if item.issue_date is not None)
+        dict.fromkeys(
+            item.issue_date for item in documents if item.issue_date is not None
+        )
     )
     if len(issue_dates) > 1:
         extracted_data["conflicting_issue_dates"] = [
@@ -356,7 +358,9 @@ def _decode_json_object(value: str) -> dict[str, object]:
         raise json.JSONDecodeError("No JSON object found", candidate, 0)
     payload, end = decoder.raw_decode(candidate, start)
     if candidate[end:].strip() not in {"", "```"}:
-        raise json.JSONDecodeError("Unexpected content after JSON object", candidate, end)
+        raise json.JSONDecodeError(
+            "Unexpected content after JSON object", candidate, end
+        )
     if not isinstance(payload, dict):
         raise TypeError("Generated JSON must be an object")
     return payload

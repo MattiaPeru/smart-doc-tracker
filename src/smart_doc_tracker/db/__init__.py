@@ -4,8 +4,8 @@ from ..db.database import (
     DatabaseConfigurationError,
     DatabaseError,
     DocumentInsertResult,
-    StoredDocument,
     MongoDocumentRepository,
+    StoredDocument,
 )
 
 __all__ = [

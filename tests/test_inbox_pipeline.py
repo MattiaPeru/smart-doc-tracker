@@ -9,7 +9,11 @@ from smart_doc_tracker.core.ocr import OCRProcessingError
 from smart_doc_tracker.core.pdf import ExtractedPage
 from smart_doc_tracker.db.database import DocumentInsertResult, StoredDocument
 from smart_doc_tracker.inbox import LocalDocumentFolders
-from smart_doc_tracker.models.document import DocumentData, ParsedLongDocument, StructuredDocumentSection
+from smart_doc_tracker.models.document import (
+    DocumentData,
+    ParsedLongDocument,
+    StructuredDocumentSection,
+)
 from smart_doc_tracker.pipeline import InboxProcessingPipeline
 
 
