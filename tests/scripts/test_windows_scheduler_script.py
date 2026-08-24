@@ -45,7 +45,7 @@ class WindowsSchedulerScriptTests(TestCase):
     def test_runner_invokes_main_once_for_daily_processing(self) -> None:
         script = RUNNER_SCRIPT_PATH.read_text(encoding="utf-8")
 
-        self.assertEqual(script.count("& $pythonPath $mainScript"), 1)
+        self.assertEqual(script.count("& $pythonPath -m smart_doc_tracker"), 1)
         self.assertNotIn("--process-inbox", script)
         self.assertNotIn("--check-expirations", script)
 

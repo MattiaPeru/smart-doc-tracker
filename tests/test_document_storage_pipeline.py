@@ -5,9 +5,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
 
-from db.database import DocumentInsertResult, StoredDocument
-from models.document import DocumentData, StructuredDocumentSection
-from pipeline import DocumentStoragePipeline
+from smart_doc_tracker.db.database import DocumentInsertResult, StoredDocument
+from smart_doc_tracker.models.document import DocumentData, StructuredDocumentSection
+from smart_doc_tracker.pipeline import DocumentStoragePipeline
 
 
 class FakeDocumentRepository:

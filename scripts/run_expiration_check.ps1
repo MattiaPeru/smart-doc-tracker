@@ -18,7 +18,6 @@ $ErrorActionPreference = "Stop"
 
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $pythonPath = Join-Path $projectRoot ".venv\Scripts\python.exe"
-$mainScript = Join-Path $projectRoot "src\main.py"
 $composeFile = Join-Path $projectRoot "docker-compose.yml"
 
 function Resolve-DockerCli {
@@ -127,9 +126,6 @@ function Start-MongoService {
 if (-not (Test-Path -LiteralPath $pythonPath -PathType Leaf)) {
     throw "The project virtual environment was not found. Create .venv and install requirements first."
 }
-if (-not (Test-Path -LiteralPath $mainScript -PathType Leaf)) {
-    throw "The Smart Doc Tracker entry point was not found."
-}
 if (-not (Test-Path -LiteralPath $composeFile -PathType Leaf)) {
     throw "The local Docker Compose configuration was not found."
 }
@@ -138,7 +134,7 @@ $dockerCli = Resolve-DockerCli
 Start-DockerDaemon -DockerCli $dockerCli -TimeoutSeconds $DockerTimeoutSeconds
 Start-MongoService -DockerCli $dockerCli -TimeoutSeconds $MongoTimeoutSeconds
 
-& $pythonPath $mainScript `
+& $pythonPath -m smart_doc_tracker `
     --days-threshold $DaysThreshold `
     --language $OcrLanguage
 exit $LASTEXITCODE

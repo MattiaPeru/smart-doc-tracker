@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "smart-doc-tracker"
 version = "0.1.0"
 description = "Privacy-first local document tracking"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "Pillow>=10.0,<12.0",
@@ -17,5 +18,9 @@ dependencies = [
     "APScheduler>=3.10,<4.0",
 ]
 
+[project.scripts]
+smart-doc-tracker = "smart_doc_tracker.main:run"
+
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["smart_doc_tracker*"]

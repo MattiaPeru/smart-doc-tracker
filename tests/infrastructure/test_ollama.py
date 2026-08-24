@@ -4,7 +4,7 @@ import json
 from unittest import TestCase
 from urllib.request import Request
 
-from infrastructure.ollama import (
+from smart_doc_tracker.infrastructure.ollama import (
     OllamaClient,
     OllamaConfigurationError,
     OllamaResponseError,

@@ -3,10 +3,10 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from unittest import TestCase
 
-from db.database import StoredDocument
-from models.document import DocumentData
-from notifier.desktop import ExpirationNotification
-from pipeline import ExpirationTrackingPipeline
+from smart_doc_tracker.db.database import StoredDocument
+from smart_doc_tracker.models.document import DocumentData
+from smart_doc_tracker.notifier.desktop import ExpirationNotification
+from smart_doc_tracker.pipeline import ExpirationTrackingPipeline
 
 
 class FakeExpirationRepository:

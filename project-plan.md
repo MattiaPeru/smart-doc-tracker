@@ -19,11 +19,12 @@ local-ai-doc-vault/
 ├── data/
 │   ├── inbox/           # Directory to monitor for new incoming documents
 │   └── processed/       # Destination for successfully parsed documents
-├── src/                 # Main source code directory
-│   ├── core/            # Core business logic (e.g., OCR processing, LLM parsing)
-│   ├── infrastructure/  # External integrations (e.g., MongoDB, Notifications)
-│   ├── models/          # Hybrid Pydantic schemas (Base Envelope + Dynamic Payload)
-│   └── main.py          # Entry point and pipeline orchestrator
+├── src/
+│   └── smart_doc_tracker/ # Installable package and canonical Python namespace
+│       ├── core/        # Core business logic (e.g., OCR processing, LLM parsing)
+│       ├── infrastructure/ # Local infrastructure adapters
+│       ├── models/      # Hybrid Pydantic schemas (Base Envelope + Dynamic Payload)
+│       └── __main__.py  # Python module entry point
 ├── tests/               # Unit and integration tests
 ├── docker-compose.yml   # Docker configuration for local MongoDB instance
 ├── requirements.txt     # Python dependencies

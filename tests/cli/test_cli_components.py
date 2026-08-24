@@ -5,10 +5,10 @@ from datetime import UTC, datetime
 from io import StringIO
 from unittest import TestCase
 
-from cli.arguments import CliArgumentParser
-from cli.serializer import JsonResultSerializer
-from db.database import DocumentInsertResult, StoredDocument
-from models.document import DocumentData
+from smart_doc_tracker.cli.arguments import CliArgumentParser
+from smart_doc_tracker.cli.serializer import JsonResultSerializer
+from smart_doc_tracker.db.database import DocumentInsertResult, StoredDocument
+from smart_doc_tracker.models.document import DocumentData
 
 
 class CliArgumentParserTests(TestCase):

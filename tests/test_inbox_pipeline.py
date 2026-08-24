@@ -5,12 +5,12 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
 
-from core.ocr import OCRProcessingError
-from core.pdf import ExtractedPage
-from db.database import DocumentInsertResult, StoredDocument
-from inbox import LocalDocumentFolders
-from models.document import DocumentData, ParsedLongDocument, StructuredDocumentSection
-from pipeline import InboxProcessingPipeline
+from smart_doc_tracker.core.ocr import OCRProcessingError
+from smart_doc_tracker.core.pdf import ExtractedPage
+from smart_doc_tracker.db.database import DocumentInsertResult, StoredDocument
+from smart_doc_tracker.inbox import LocalDocumentFolders
+from smart_doc_tracker.models.document import DocumentData, ParsedLongDocument, StructuredDocumentSection
+from smart_doc_tracker.pipeline import InboxProcessingPipeline
 
 
 class FakeOCR:

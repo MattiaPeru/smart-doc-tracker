@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 from unittest import TestCase
 
-from scheduler import DailyTaskScheduler, SchedulerConfigurationError, parse_daily_time
+from smart_doc_tracker.scheduler import DailyTaskScheduler, SchedulerConfigurationError, parse_daily_time
 
 
 class FakeSchedulerBackend:

@@ -5,7 +5,7 @@ from unittest import TestCase
 
 from pydantic import ValidationError
 
-from models.document import DocumentData
+from smart_doc_tracker.models.document import DocumentData
 
 
 class DocumentDataTests(TestCase):

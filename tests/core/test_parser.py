@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from unittest import TestCase
 
-from core.parser import DocumentParser, DocumentParsingError, SYSTEM_PROMPT
+from smart_doc_tracker.core.parser import DocumentParser, DocumentParsingError, SYSTEM_PROMPT
 
 
 class FakeGenerator:

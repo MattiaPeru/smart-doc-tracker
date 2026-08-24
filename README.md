@@ -23,31 +23,35 @@ Create and activate a virtual environment, then install the Python dependencies:
 ```powershell
 python -m venv .venv
 .venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+python -m pip install -e .
 ```
+
+This installs the `smart_doc_tracker` Python package and the
+`smart-doc-tracker` command. The equivalent module form is
+`python -m smart_doc_tracker`.
 
 Run OCR on a sample image:
 
 ```powershell
-python src/main.py path\to\sample.png --language ita
+smart-doc-tracker path\to\sample.png --language ita
 ```
 
 Run OCR followed by validated local AI parsing:
 
 ```powershell
-python src/main.py path\to\sample.png --language ita --structured
+smart-doc-tracker path\to\sample.png --language ita --structured
 ```
 
 Process an image and store its validated data in local MongoDB:
 
 ```powershell
-python src/main.py path\to\sample.png --language ita --structured --store
+smart-doc-tracker path\to\sample.png --language ita --structured --store
 ```
 
 Process a PDF of any document type in bounded page-aware sections:
 
 ```powershell
-python src/main.py path\to\document.pdf --language ita --structured --store
+smart-doc-tracker path\to\document.pdf --language ita --structured --store
 ```
 
 Digital PDF pages are read directly. Pages without a usable text layer fall back
@@ -67,7 +71,7 @@ Place supported image or PDF documents in `data/inbox`, then run the complete lo
 pipeline with:
 
 ```powershell
-python src/main.py --process-inbox --language ita
+smart-doc-tracker --process-inbox --language ita
 ```
 
 The startup scanner creates `data/inbox` and `data/processed` when needed. Each
@@ -81,7 +85,7 @@ The command prints aggregate counts only; it does not log filenames, OCR text,
 or extracted fields. Use custom local folders when needed:
 
 ```powershell
-python src/main.py --process-inbox --inbox-dir D:\Docs\inbox --processed-dir D:\Docs\processed
+smart-doc-tracker --process-inbox --inbox-dir D:\Docs\inbox --processed-dir D:\Docs\processed
 ```
 
 ## Run the complete pipeline now
@@ -92,7 +96,7 @@ and archive valid documents, then send expiration notifications for the selected
 inclusive window:
 
 ```powershell
-python src/main.py --days-threshold 30 --language ita
+smart-doc-tracker --days-threshold 30 --language ita
 ```
 
 Only `--days-threshold` is required. The OCR language defaults to `eng`, while
@@ -103,13 +107,13 @@ command returns a non-zero exit code after reporting the aggregate results.
 List all documents stored by this project:
 
 ```powershell
-python src/main.py --list-stored
+smart-doc-tracker --list-stored
 ```
 
 Read one document using the `id` printed by either command:
 
 ```powershell
-python src/main.py --get-stored 64b64b64b64b64b64b64b64b
+smart-doc-tracker --get-stored 64b64b64b64b64b64b64b64b
 ```
 
 The default Ollama endpoint is `http://127.0.0.1:11434`. The client rejects remote
@@ -141,8 +145,8 @@ docker compose up -d
 Use the local repository from Python:
 
 ```python
-from core.file_hash import calculate_file_sha256
-from db.database import MongoDocumentRepository
+from smart_doc_tracker.core.file_hash import calculate_file_sha256
+from smart_doc_tracker.db.database import MongoDocumentRepository
 
 file_hash = calculate_file_sha256("path/to/document.png")
 with MongoDocumentRepository.connect() as repository:
@@ -164,20 +168,20 @@ Run one expiration check and send a desktop notification for each document that
 expires today or within the next 30 days:
 
 ```powershell
-python src/main.py --check-expirations
+smart-doc-tracker --check-expirations
 ```
 
 Use a different inclusive window when needed:
 
 ```powershell
-python src/main.py --check-expirations --days-threshold 14
+smart-doc-tracker --check-expirations --days-threshold 14
 ```
 
 Keep the application running in the foreground and perform the same check every
 day at 09:00 in the host's local timezone:
 
 ```powershell
-python src/main.py --monitor-expirations --check-time 09:00 --days-threshold 30
+smart-doc-tracker --monitor-expirations --check-time 09:00 --days-threshold 30
 ```
 
 The monitoring process must remain running. Stop it with `Ctrl+C`. Alerts contain
@@ -218,6 +222,5 @@ Supported formats are BMP, JPEG, PNG, TIFF, WebP, and PDF. Run the deterministic
 offline test suite with:
 
 ```powershell
-$env:PYTHONPATH = "src"
 .venv\Scripts\python.exe -m unittest discover -s tests -t . -v
 ```

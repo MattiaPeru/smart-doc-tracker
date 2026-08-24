@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
 
-from core.ocr import OCRInputError, OCRProcessingError, TesseractOCR
+from smart_doc_tracker.core.ocr import OCRInputError, OCRProcessingError, TesseractOCR
 
 
 @contextmanager

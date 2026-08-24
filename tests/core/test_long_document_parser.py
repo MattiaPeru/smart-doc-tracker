@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from unittest import TestCase
 
-from core.parser import LongDocumentParser
-from core.pdf import ExtractedPage
+from smart_doc_tracker.core.parser import LongDocumentParser
+from smart_doc_tracker.core.pdf import ExtractedPage
 
 
 class SequencedGenerator:

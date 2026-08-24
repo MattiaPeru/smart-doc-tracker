@@ -4,7 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
 
-from core.file_hash import FileHashingError, calculate_file_sha256
+from smart_doc_tracker.core.file_hash import FileHashingError, calculate_file_sha256
 
 
 class FileHashTests(TestCase):

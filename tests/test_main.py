@@ -7,14 +7,14 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
 
-from core.ocr import OCRInputError
-from core.parser import DocumentParsingError
-from db.database import DocumentInsertResult, StoredDocument
-from inbox import LocalDocumentFolders
-from core.pdf import ExtractedPage
-from models.document import DocumentData, ParsedLongDocument, StructuredDocumentSection
-from notifier.desktop import ExpirationNotification
-from main import run
+from smart_doc_tracker.core.ocr import OCRInputError
+from smart_doc_tracker.core.parser import DocumentParsingError
+from smart_doc_tracker.db.database import DocumentInsertResult, StoredDocument
+from smart_doc_tracker.inbox import LocalDocumentFolders
+from smart_doc_tracker.core.pdf import ExtractedPage
+from smart_doc_tracker.models.document import DocumentData, ParsedLongDocument, StructuredDocumentSection
+from smart_doc_tracker.notifier.desktop import ExpirationNotification
+from smart_doc_tracker.main import run
 
 
 class FakeOCR:

@@ -4,7 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
 
-from core.pdf import ExtractedPage, LocalPDFTextExtractor, PDFInputError
+from smart_doc_tracker.core.pdf import ExtractedPage, LocalPDFTextExtractor, PDFInputError
 
 
 class LocalPDFTextExtractorTests(TestCase):

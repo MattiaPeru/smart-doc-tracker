@@ -9,8 +9,8 @@ from unittest.mock import patch
 
 from bson import ObjectId
 
-from db.database import DatabaseConfigurationError, MongoDocumentRepository
-from models.document import DocumentData, StructuredDocumentSection
+from smart_doc_tracker.db.database import DatabaseConfigurationError, MongoDocumentRepository
+from smart_doc_tracker.models.document import DocumentData, StructuredDocumentSection
 
 
 @dataclass
@@ -229,7 +229,10 @@ class MongoDocumentRepositoryTests(TestCase):
             def __getitem__(self, name: str) -> FakeCollection:
                 return collection
 
-        with patch("db.database.MongoClient", return_value=client) as constructor:
+        with patch(
+            "smart_doc_tracker.db.database.MongoClient",
+            return_value=client,
+        ) as constructor:
             repository = MongoDocumentRepository.connect()
 
         self.assertTrue(client.pinged)
