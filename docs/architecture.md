@@ -47,6 +47,79 @@ Domain models do not depend on MongoDB, ChromaDB, HTTP, or the CLI. Infrastructu
 adapters implement protocols from `interfaces` and are passed into workflows
 explicitly.
 
+## Component diagram
+
+The following diagram shows the current implemented architecture. The dependency
+arrows between application components point toward the component being used. The
+dashed arrows show adapters implementing the narrow contracts consumed by the
+pipelines.
+
+```mermaid
+flowchart TB
+    User[Local user]
+
+    subgraph Presentation[Presentation and composition]
+        CLI[CLI<br/>arguments and JSON output]
+        Controllers[Workflow controllers<br/>dependency composition]
+    end
+
+    subgraph Application[Application orchestration]
+        Pipelines[Processing, inbox, RAG,<br/>storage, and expiration pipelines]
+    end
+
+    subgraph Domain[Domain and contracts]
+        Interfaces[Narrow interfaces]
+        Models[Validated domain models]
+    end
+
+    subgraph Adapters[Local adapters]
+        Core[OCR, PDF extraction,<br/>parsing, and hashing]
+        OllamaAdapters[Ollama generation<br/>and embeddings]
+        MongoAdapter[MongoDB repository]
+        ChromaAdapter[Chroma vector index]
+        Folders[Inbox and processed folders]
+        Notifier[Desktop notifier]
+        Scheduler[Daily scheduler]
+    end
+
+    subgraph Host[Same-host resources]
+        LocalFiles[(Local documents)]
+        Tesseract[Tesseract]
+        Ollama[Ollama<br/>loopback only]
+        Mongo[(MongoDB<br/>loopback only)]
+        Chroma[(ChromaDB<br/>loopback only)]
+        Desktop[Operating-system notifications]
+    end
+
+    User --> CLI
+    CLI --> Controllers
+    Controllers --> Pipelines
+    Controllers --> Scheduler
+    Pipelines --> Interfaces
+    Pipelines --> Models
+
+    Core -. implements .-> Interfaces
+    OllamaAdapters -. implements .-> Interfaces
+    MongoAdapter -. implements .-> Interfaces
+    ChromaAdapter -. implements .-> Interfaces
+    Folders -. implements .-> Interfaces
+    Notifier -. implements .-> Interfaces
+    Scheduler -. implements .-> Interfaces
+
+    Core --> LocalFiles
+    Core --> Tesseract
+    Folders --> LocalFiles
+    OllamaAdapters --> Ollama
+    MongoAdapter --> Mongo
+    ChromaAdapter --> Chroma
+    ChromaAdapter --> OllamaAdapters
+    Notifier --> Desktop
+```
+
+Every resource in the bottom group is local to the host. In particular, the Ollama,
+MongoDB, and ChromaDB adapters reject or are deployed without non-loopback
+application endpoints.
+
 ## Document ingestion flow
 
 1. The caller supplies a regular local file with an allow-listed extension.
@@ -67,6 +140,95 @@ MongoDB and ChromaDB do not form a distributed transaction. A vector-index failu
 after MongoDB insertion can therefore leave a stored document without a complete
 index. Operational reconciliation is a required future capability.
 
+### Single-document processing sequence
+
+Optional blocks correspond to the `--structured` and `--store` CLI switches. PDF
+pages use their text layer when it is usable and fall back to Tesseract locally when
+needed.
+
+```mermaid
+sequenceDiagram
+    actor User as Local user
+    participant CLI
+    participant Controller as Document processing controller
+    participant Pipeline as Document processing pipeline
+    participant Extractor as OCR / PDF extractor
+    participant Parser as Structured parser
+    participant Ollama as Local Ollama
+    participant Repository as MongoDB repository
+    participant Index as Chroma vector index
+
+    User->>CLI: Process a local image or PDF
+    CLI->>Controller: Dispatch validated arguments
+    Controller->>Pipeline: process(path, structured, store)
+    alt PDF document
+        Pipeline->>Extractor: Extract pages with PyMuPDF
+        opt Page has no usable text layer
+            Extractor->>Extractor: Run local Tesseract OCR
+        end
+        Extractor-->>Pipeline: Page-aware raw text
+    else Image document
+        Pipeline->>Extractor: Run local Tesseract OCR
+        Extractor-->>Pipeline: Raw text
+    end
+    opt Structured processing
+        Pipeline->>Parser: Parse raw text or bounded page chunks
+        Parser->>Ollama: Generate structured JSON locally
+        Ollama-->>Parser: JSON candidate
+        Parser->>Parser: Validate as DocumentData
+        Parser-->>Pipeline: Validated document and optional sections
+    end
+    opt Local storage
+        Pipeline->>Pipeline: Calculate source SHA-256
+        Pipeline->>Repository: Insert document by file hash
+        Repository-->>Pipeline: Record ID and insertion status
+        opt Long-PDF sections
+            Pipeline->>Repository: Upsert validated sections
+        end
+        Pipeline->>Index: Upsert raw, summary, and structured fragments
+        Index->>Ollama: Generate embeddings locally
+        Ollama-->>Index: Embedding vectors
+        Index->>Index: Upsert vectors in local ChromaDB
+    end
+    Pipeline-->>Controller: Processing result
+    Controller-->>CLI: Sanitized JSON or extracted text
+    CLI-->>User: Local command result
+```
+
+### Inbox processing sequence
+
+Each supported file is isolated from the others. A file is archived only after the
+processing pipeline, persistence, and any configured indexing have all completed.
+
+```mermaid
+sequenceDiagram
+    actor User as Local user or combined workflow
+    participant Controller as Inbox workflow controller
+    participant Folders as Local document folders
+    participant Inbox as Inbox processing pipeline
+    participant Document as Document processing pipeline
+    participant Processed as Processed folder
+
+    User->>Controller: Process inbox
+    Controller->>Inbox: process()
+    Inbox->>Folders: scan()
+    Folders-->>Inbox: Supported files and skipped count
+    loop Each supported file
+        Inbox->>Document: Extract, parse, store, and index
+        alt Processing succeeds
+            Document-->>Inbox: Stored result
+            Inbox->>Folders: archive(source path)
+            Folders->>Processed: Move with collision-safe name
+            Processed-->>Folders: Archived path
+        else Expected local processing failure
+            Document--xInbox: Sanitized failure
+            Note over Inbox,Folders: Count failure and leave source in inbox
+        end
+    end
+    Inbox-->>Controller: Privacy-conscious scan summary
+    Controller-->>User: JSON counts and local status
+```
+
 ## Query and expiration flows
 
 For general questions, the application embeds the question locally, retrieves the
@@ -77,6 +239,75 @@ MongoDB dates directly and do not depend on semantic retrieval.
 Expiration checks query an inclusive range from today through the configured number
 of days. The notifier receives only a prepared document label and normalized expiry
 date; it does not receive OCR text or the dynamic payload.
+
+### Document-question sequence
+
+Calendar-year expiration questions deliberately bypass semantic retrieval and use
+normalized dates. Other questions follow the local retrieval-augmented generation
+path.
+
+```mermaid
+sequenceDiagram
+    actor User as Local user
+    participant Controller as RAG workflow controller
+    participant Repository as MongoDB repository
+    participant Pipeline as Document question pipeline
+    participant Index as Chroma vector index
+    participant Ollama as Local Ollama
+
+    User->>Controller: Ask a document question
+    Controller->>Controller: Detect an unambiguous expiry year
+    alt Calendar-year expiration question
+        Controller->>Repository: Query normalized expiry dates for year
+        Repository-->>Controller: Matching validated records
+        Controller->>Controller: Build deterministic answer
+    else General document question
+        Controller->>Pipeline: ask(question, limit)
+        Pipeline->>Index: Query nearest fragments
+        Index->>Ollama: Embed question locally
+        Ollama-->>Index: Query embedding
+        Index->>Index: Search local ChromaDB
+        Index-->>Pipeline: Ranked document fragments
+        alt Context is available
+            Pipeline->>Ollama: Generate answer from retrieved context only
+            Ollama-->>Pipeline: JSON answer candidate
+            Pipeline->>Pipeline: Validate schema and referenced document IDs
+        else No matching context
+            Pipeline->>Pipeline: Build deterministic insufficient-context answer
+        end
+        Pipeline-->>Controller: Grounded DocumentAnswer
+    end
+    Controller-->>User: Answer and supporting document IDs
+```
+
+### Expiration-check sequence
+
+The same check can be invoked once by the CLI, periodically by the foreground daily
+scheduler, or after inbox processing in the combined workflow.
+
+```mermaid
+sequenceDiagram
+    actor Trigger as CLI, scheduler, or combined workflow
+    participant Controller as Expiration workflow controller
+    participant Pipeline as Expiration tracking pipeline
+    participant Repository as MongoDB repository
+    participant Notifier as Desktop notifier
+    participant Desktop as Operating system
+
+    Trigger->>Controller: Check expirations(days threshold)
+    Controller->>Pipeline: check(days threshold)
+    Pipeline->>Repository: Query inclusive date window
+    Repository-->>Pipeline: Validated document records
+    loop Each record with an expiry date
+        Pipeline->>Pipeline: Prepare label and normalized date only
+        Pipeline->>Notifier: Send expiration notification
+        Notifier->>Desktop: Display local notification
+        Desktop-->>Notifier: Delivery accepted
+        Notifier-->>Pipeline: Sent
+    end
+    Pipeline-->>Controller: Documents found and notifications sent
+    Controller-->>Trigger: Sanitized JSON summary
+```
 
 ## Planned FastAPI application
 
