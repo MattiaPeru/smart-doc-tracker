@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+from pathlib import Path
 
 from ..cli.dependencies import CliDependencies
 from ..cli.serializer import JsonResultSerializer
@@ -26,6 +27,7 @@ from ..db.database import (
     DatabaseError,
     MongoDocumentRepository,
 )
+from ..db.vector_database import VectorDatabaseError
 from ..infrastructure.ollama import (
     OllamaClient,
     OllamaConfigurationError,
@@ -33,6 +35,7 @@ from ..infrastructure.ollama import (
     OllamaResponseError,
 )
 from ..pipeline import DocumentProcessingPipeline, DocumentProcessingStage
+from .rag_workflow_controller import create_document_vector_index
 
 
 @dataclass(slots=True)
@@ -85,6 +88,16 @@ class DocumentProcessingController:
                     flush=True,
                 )
 
+        def report_extracted_text(source_path: Path, raw_text: str) -> None:
+            """Render explicitly requested sensitive extraction output."""
+            print(
+                f"--- Extracted text: {source_path.name} ---",
+                file=stderr,
+                flush=True,
+            )
+            print(raw_text, file=stderr, flush=True)
+            print("--- End extracted text ---", file=stderr, flush=True)
+
         try:
             parser = None
             long_parser = None
@@ -110,8 +123,19 @@ class DocumentProcessingController:
                     if args.store
                     else None
                 ),
+                vector_index=(
+                    dependencies.document_vector_index
+                    or (
+                        create_document_vector_index(dependencies, args)
+                        if args.store and dependencies.repository_factory is None
+                        else None
+                    )
+                ),
                 language=args.language,
                 progress_reporter=report_progress,
+                extracted_text_reporter=(
+                    report_extracted_text if args.print_ocr_text else None
+                ),
             ).process(
                 args.image,
                 structured=args.structured,
@@ -135,7 +159,12 @@ class DocumentProcessingController:
         ) as exc:
             print(f"Parsing failed: {exc}", file=stderr)
             return 1
-        except (FileHashingError, DatabaseConfigurationError, DatabaseError) as exc:
+        except (
+            FileHashingError,
+            DatabaseConfigurationError,
+            DatabaseError,
+            VectorDatabaseError,
+        ) as exc:
             print(f"Storage failed: {exc}", file=stderr)
             return 1
 

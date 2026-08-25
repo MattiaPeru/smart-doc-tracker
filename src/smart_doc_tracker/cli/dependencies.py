@@ -11,12 +11,14 @@ from typing import TextIO
 from ..inbox import LocalDocumentFolders
 from ..interfaces.document_folders import DocumentFolders
 from ..interfaces.document_repository import DocumentRepository
+from ..interfaces.document_vector_index import DocumentVectorIndex
 from ..interfaces.long_structured_document_parser import LongStructuredDocumentParser
 from ..interfaces.notification_sender import NotificationSender
 from ..interfaces.ocr_extractor import OCRExtractor
 from ..interfaces.pdf_page_extractor import PDFPageExtractor
 from ..interfaces.scheduler import Scheduler
 from ..interfaces.structured_document_parser import StructuredDocumentParser
+from ..interfaces.text_generator import TextGenerator
 
 RepositoryFactory = Callable[[], DocumentRepository]
 DocumentFoldersFactory = Callable[[Path, Path], DocumentFolders]
@@ -34,6 +36,8 @@ class CliDependencies:
     folders_factory: DocumentFoldersFactory = LocalDocumentFolders
     pdf_extractor: PDFPageExtractor | None = None
     long_document_parser: LongStructuredDocumentParser | None = None
+    document_vector_index: DocumentVectorIndex | None = None
+    rag_generator: TextGenerator | None = None
     stdout: TextIO = field(default_factory=lambda: sys.stdout)
     stderr: TextIO = field(default_factory=lambda: sys.stderr)
 

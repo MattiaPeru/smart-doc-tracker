@@ -1,3 +1,5 @@
+name: smart-doc-tracker
+
 services:
   mongodb:
     image: mongo:7.0
@@ -13,5 +15,32 @@ services:
       retries: 5
       start_period: 10s
 
+  chromadb:
+    image: chromadb/chroma:1.5.9
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      CHROMA_PERSIST_PATH: /data
+      CHROMA_ALLOW_RESET: "false"
+      ANONYMIZED_TELEMETRY: "false"
+      ALLOW_RESET: "false"
+      IS_PERSISTENT: "true"
+    volumes:
+      - smart_doc_tracker_chromadb:/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/usr/bin/bash",
+          "-c",
+          "cat < /dev/null > /dev/tcp/127.0.0.1/8000",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
 volumes:
   smart_doc_tracker_mongodb:
+  smart_doc_tracker_chromadb:

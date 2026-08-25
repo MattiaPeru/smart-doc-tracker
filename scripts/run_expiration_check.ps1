@@ -84,7 +84,7 @@ function Start-DockerDaemon {
     throw "Docker Desktop did not become ready before the local timeout."
 }
 
-function Start-MongoService {
+function Start-StorageServices {
     param(
         [Parameter(Mandatory = $true)][string]$DockerCli,
         [Parameter(Mandatory = $true)][int]$TimeoutSeconds
@@ -93,9 +93,9 @@ function Start-MongoService {
     & $DockerCli compose `
         --file $composeFile `
         --project-directory $projectRoot `
-        up -d --pull never mongodb
+        up -d --pull never mongodb chromadb
     if ($LASTEXITCODE -ne 0) {
-        throw "The local MongoDB container could not be started."
+        throw "The local storage containers could not be started."
     }
 
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
@@ -110,17 +110,24 @@ function Start-MongoService {
                 mongosh --quiet --eval "quit(db.adminCommand('ping').ok ? 0 : 1)" `
                 *> $null
             $mongoIsReady = $LASTEXITCODE -eq 0
+            & $DockerCli compose `
+                --file $composeFile `
+                --project-directory $projectRoot `
+                exec -T chromadb `
+                /usr/bin/bash -c "cat < /dev/null > /dev/tcp/127.0.0.1/8000" `
+                *> $null
+            $chromaIsReady = $LASTEXITCODE -eq 0
         }
         finally {
             $ErrorActionPreference = $previousErrorActionPreference
         }
-        if ($mongoIsReady) {
+        if ($mongoIsReady -and $chromaIsReady) {
             return
         }
         Start-Sleep -Seconds 2
     }
 
-    throw "The local MongoDB service did not become ready before the local timeout."
+    throw "The local storage services did not become ready before the local timeout."
 }
 
 if (-not (Test-Path -LiteralPath $pythonPath -PathType Leaf)) {
@@ -132,7 +139,7 @@ if (-not (Test-Path -LiteralPath $composeFile -PathType Leaf)) {
 
 $dockerCli = Resolve-DockerCli
 Start-DockerDaemon -DockerCli $dockerCli -TimeoutSeconds $DockerTimeoutSeconds
-Start-MongoService -DockerCli $dockerCli -TimeoutSeconds $MongoTimeoutSeconds
+Start-StorageServices -DockerCli $dockerCli -TimeoutSeconds $MongoTimeoutSeconds
 
 & $pythonPath -m smart_doc_tracker `
     --days-threshold $DaysThreshold `

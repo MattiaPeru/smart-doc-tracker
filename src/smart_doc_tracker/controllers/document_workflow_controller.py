@@ -9,6 +9,7 @@ from ..cli.dependencies import CliDependencies
 from ..controllers.document_processing_controller import DocumentProcessingController
 from ..controllers.expiration_workflow_controller import ExpirationWorkflowController
 from ..controllers.inbox_workflow_controller import InboxWorkflowController
+from ..controllers.rag_workflow_controller import RagWorkflowController
 from ..controllers.stored_document_controller import StoredDocumentController
 
 
@@ -26,6 +27,8 @@ class DocumentWorkflowController:
             return StoredDocumentController(self.dependencies).get_stored(
                 args.get_stored
             )
+        if args.ask_documents is not None:
+            return RagWorkflowController(self.dependencies).ask_documents(args)
 
         days_threshold = args.days_threshold if args.days_threshold is not None else 30
         if args.check_expirations:

@@ -33,12 +33,13 @@ class WindowsSchedulerScriptTests(TestCase):
         script = RUNNER_SCRIPT_PATH.read_text(encoding="utf-8")
 
         docker_position = script.index("Start-DockerDaemon -DockerCli")
-        mongo_position = script.index("Start-MongoService -DockerCli")
+        storage_position = script.index("Start-StorageServices -DockerCli")
         pipeline_position = script.index("--days-threshold $DaysThreshold")
-        self.assertLess(docker_position, mongo_position)
-        self.assertLess(mongo_position, pipeline_position)
-        self.assertIn("up -d --pull never mongodb", script)
+        self.assertLess(docker_position, storage_position)
+        self.assertLess(storage_position, pipeline_position)
+        self.assertIn("up -d --pull never mongodb chromadb", script)
         self.assertIn("db.adminCommand('ping')", script)
+        self.assertIn("/dev/tcp/127.0.0.1/8000", script)
         self.assertIn("--language $OcrLanguage", script)
 
     def test_runner_invokes_main_once_for_daily_processing(self) -> None:
@@ -62,6 +63,7 @@ class WindowsSchedulerScriptTests(TestCase):
         self.assertEqual(script.count('$ErrorActionPreference = "SilentlyContinue"'), 2)
         self.assertIn("$probeSucceeded = $LASTEXITCODE -eq 0", script)
         self.assertIn("$mongoIsReady = $LASTEXITCODE -eq 0", script)
+        self.assertIn("$chromaIsReady = $LASTEXITCODE -eq 0", script)
         self.assertEqual(
             script.count("$ErrorActionPreference = $previousErrorActionPreference"),
             2,

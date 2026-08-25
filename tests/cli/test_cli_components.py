@@ -14,13 +14,21 @@ from smart_doc_tracker.models.document import DocumentData
 class CliArgumentParserTests(TestCase):
     def test_parses_local_document_command_options(self) -> None:
         arguments = CliArgumentParser().parse(
-            ["document.pdf", "--structured", "--store", "--language", "ita"]
+            [
+                "document.pdf",
+                "--structured",
+                "--store",
+                "--language",
+                "ita",
+                "--print-ocr-text",
+            ]
         )
 
         self.assertEqual(arguments.image.name, "document.pdf")
         self.assertTrue(arguments.structured)
         self.assertTrue(arguments.store)
         self.assertEqual(arguments.language, "ita")
+        self.assertTrue(arguments.print_ocr_text)
 
 
 class JsonResultSerializerTests(TestCase):

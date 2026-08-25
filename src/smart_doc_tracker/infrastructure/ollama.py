@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
@@ -103,6 +103,71 @@ class OllamaClient:
                 "The local Ollama service returned an empty response."
             )
         return generated_text
+
+
+class OllamaEmbeddingClient:
+    """Generate embeddings through an Ollama server bound to loopback."""
+
+    def __init__(
+        self,
+        *,
+        base_url: str = "http://127.0.0.1:11434",
+        model: str = "embeddinggemma",
+        timeout_seconds: float = 120.0,
+        transport: Transport = urlopen,
+    ) -> None:
+        """Configure a local embedding model without remote fallbacks."""
+        self._base_url = _validate_loopback_url(base_url)
+        if not model.strip():
+            raise OllamaConfigurationError(
+                "The Ollama embedding model cannot be empty."
+            )
+        if timeout_seconds <= 0:
+            raise OllamaConfigurationError("The Ollama timeout must be positive.")
+        self._model = model
+        self._timeout_seconds = timeout_seconds
+        self._transport = transport
+
+    def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        """Return one normalized embedding per input using the local model."""
+        inputs = list(texts)
+        if not inputs or any(not value.strip() for value in inputs):
+            raise ValueError("Embedding inputs cannot be empty.")
+        body = json.dumps(
+            {"model": self._model, "input": inputs, "truncate": True}
+        ).encode("utf-8")
+        request = Request(
+            f"{self._base_url}/api/embed",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with self._transport(request, timeout=self._timeout_seconds) as response:
+                response_body = response.read()
+        except (HTTPError, URLError, OSError) as exc:
+            raise OllamaConnectionError(
+                "The local Ollama embedding service is unavailable."
+            ) from exc
+        try:
+            payload: Any = json.loads(response_body.decode("utf-8"))
+            embeddings = payload["embeddings"]
+            if (
+                not isinstance(embeddings, list)
+                or len(embeddings) != len(inputs)
+                or any(
+                    not isinstance(vector, list)
+                    or not vector
+                    or any(not isinstance(value, (int, float)) for value in vector)
+                    for vector in embeddings
+                )
+            ):
+                raise TypeError
+        except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError) as exc:
+            raise OllamaResponseError(
+                "The local Ollama embedding service returned an invalid response."
+            ) from exc
+        return [[float(value) for value in vector] for vector in embeddings]
 
 
 def _validate_loopback_url(base_url: str) -> str:

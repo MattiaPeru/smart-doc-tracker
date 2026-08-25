@@ -113,6 +113,7 @@ class InboxProcessingPipelineTests(TestCase):
             ocr = FakeOCR()
             parser = FakeParser(_document())
             writer = FakeWriter()
+            extracted_texts: list[tuple[Path, str]] = []
 
             result = InboxProcessingPipeline(
                 ocr=ocr,
@@ -120,6 +121,9 @@ class InboxProcessingPipelineTests(TestCase):
                 repository=writer,
                 folders=LocalDocumentFolders(inbox, processed),
                 language="ita",
+                extracted_text_reporter=lambda path, text: extracted_texts.append(
+                    (path, text)
+                ),
             ).process()
 
             self.assertEqual(result.discovered, 2)
@@ -129,6 +133,10 @@ class InboxProcessingPipelineTests(TestCase):
             self.assertEqual([call[0].name for call in ocr.calls], ["a.jpg", "b.png"])
             self.assertTrue(all(call[1] == "ita" for call in ocr.calls))
             self.assertEqual(len(writer.calls), 2)
+            self.assertEqual(
+                [(path.name, text) for path, text in extracted_texts],
+                [("a.jpg", "local OCR text"), ("b.png", "local OCR text")],
+            )
             self.assertTrue((processed / "a.jpg").is_file())
             self.assertTrue((processed / "b.png").is_file())
             self.assertTrue((inbox / "notes.txt").is_file())

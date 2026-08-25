@@ -44,6 +44,14 @@ class CliArgumentParser:
             action="store_true",
             help="Store validated structured data in the local MongoDB database.",
         )
+        parser.add_argument(
+            "--print-ocr-text",
+            action="store_true",
+            help=(
+                "Print locally extracted OCR or PDF text before structured parsing. "
+                "This can expose sensitive document contents in the terminal."
+            ),
+        )
         operation_group = parser.add_mutually_exclusive_group()
         operation_group.add_argument(
             "--list-stored",
@@ -69,6 +77,11 @@ class CliArgumentParser:
             "--process-inbox",
             action="store_true",
             help="Process all supported images currently in the local inbox.",
+        )
+        operation_group.add_argument(
+            "--ask-documents",
+            metavar="QUESTION",
+            help="Ask a grounded question across locally indexed documents.",
         )
         parser.add_argument(
             "--inbox-dir",
@@ -112,6 +125,22 @@ class CliArgumentParser:
             default="http://127.0.0.1:11434",
             help="Loopback-only Ollama endpoint (default: http://127.0.0.1:11434).",
         )
+        parser.add_argument(
+            "--embedding-model",
+            default="embeddinggemma",
+            help="Locally installed Ollama embedding model (default: embeddinggemma).",
+        )
+        parser.add_argument(
+            "--chroma-url",
+            default="http://127.0.0.1:8000",
+            help="Loopback-only Chroma endpoint (default: http://127.0.0.1:8000).",
+        )
+        parser.add_argument(
+            "--rag-results",
+            type=CliArgumentParser._positive_integer,
+            default=5,
+            help="Maximum retrieved fragments for a document question (default: 5).",
+        )
         return parser
 
     @staticmethod
@@ -123,4 +152,12 @@ class CliArgumentParser:
             raise argparse.ArgumentTypeError("must be a non-negative integer") from exc
         if parsed < 0:
             raise argparse.ArgumentTypeError("must be a non-negative integer")
+        return parsed
+
+    @staticmethod
+    def _positive_integer(value: str) -> int:
+        """Parse an integer value and require a positive result."""
+        parsed = CliArgumentParser._non_negative_integer(value)
+        if parsed == 0:
+            raise argparse.ArgumentTypeError("must be a positive integer")
         return parsed

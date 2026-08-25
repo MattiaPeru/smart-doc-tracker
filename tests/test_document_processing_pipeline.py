@@ -46,6 +46,20 @@ class FakeWriter:
         return None
 
 
+class FakeVectorIndex:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, DocumentData]] = []
+
+    def upsert_document(
+        self,
+        document_id: str,
+        *,
+        raw_text: str,
+        document: DocumentData,
+    ) -> None:
+        self.calls.append((document_id, raw_text, document))
+
+
 class DocumentProcessingPipelineTests(TestCase):
     def test_coordinates_extraction_parsing_and_storage_in_order(self) -> None:
         document = DocumentData(
@@ -62,6 +76,8 @@ class DocumentProcessingPipelineTests(TestCase):
             created_at=datetime(2026, 8, 20, 10, 0, tzinfo=UTC),
         )
         stages: list[DocumentProcessingStage] = []
+        extracted_texts: list[tuple[Path, str]] = []
+        vector_index = FakeVectorIndex()
 
         with TemporaryDirectory() as directory:
             source_path = Path(directory) / "invoice.png"
@@ -70,12 +86,21 @@ class DocumentProcessingPipelineTests(TestCase):
                 ocr=FakeOCR(),
                 parser=FakeParser(document),
                 repository=FakeWriter(record),
+                vector_index=vector_index,
                 progress_reporter=stages.append,
+                extracted_text_reporter=lambda path, text: extracted_texts.append(
+                    (path, text)
+                ),
             ).process(source_path, structured=True, store=True)
 
         self.assertEqual(result.raw_text, "Local extracted text")
         self.assertEqual(result.document, document)
+        self.assertEqual(extracted_texts, [(source_path, "Local extracted text")])
         self.assertIsNotNone(result.insert_result)
+        self.assertEqual(
+            vector_index.calls,
+            [(record.id, "Local extracted text", document)],
+        )
         self.assertEqual(
             stages,
             [

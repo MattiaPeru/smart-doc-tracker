@@ -85,5 +85,5 @@ local-ai-doc-vault/
 *   **Data Hygiene:** Any temporary image files generated during PDF-to-image conversion must be deleted immediately after OCR extraction.
 
 ## 6. Future Extensions (Scaling the Vault)
-*   **RAG Implementation (Chat with your Documents):** Store the extracted text, summaries, and dynamic JSON values in a local Vector DB (like `ChromaDB`) to enable natural language queries across all document types.
+*   **RAG Implementation (Chat with your Documents): Implemented.** Extracted text, summaries, and dynamic JSON values are embedded by a loopback-only Ollama model and persisted by a Dockerized ChromaDB server exposed only on loopback for grounded natural-language queries across all document types.
 *   **Local Web Dashboard:** Build a `Streamlit` or `FastAPI` interface to visualize documents, query dynamic JSON attributes, handle file uploads, and display color-coded expiration alerts.

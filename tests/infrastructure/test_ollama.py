@@ -7,6 +7,7 @@ from urllib.request import Request
 from smart_doc_tracker.infrastructure.ollama import (
     OllamaClient,
     OllamaConfigurationError,
+    OllamaEmbeddingClient,
     OllamaResponseError,
 )
 
@@ -67,3 +68,30 @@ class OllamaClientTests(TestCase):
             OllamaClient(transport=transport).generate(
                 system_prompt="system", user_prompt="OCR data"
             )
+
+
+class OllamaEmbeddingClientTests(TestCase):
+    def test_sends_batch_to_local_embed_endpoint(self) -> None:
+        calls: list[tuple[Request, float]] = []
+
+        def transport(request: Request, *, timeout: float) -> FakeResponse:
+            calls.append((request, timeout))
+            return FakeResponse(b'{"embeddings":[[0.1,0.2],[0.3,0.4]]}')
+
+        result = OllamaEmbeddingClient(transport=transport).embed(["one", "two"])
+
+        self.assertEqual(result, [[0.1, 0.2], [0.3, 0.4]])
+        request, timeout = calls[0]
+        self.assertEqual(request.full_url, "http://127.0.0.1:11434/api/embed")
+        payload = json.loads(request.data or b"")
+        self.assertEqual(payload["model"], "embeddinggemma")
+        self.assertEqual(payload["input"], ["one", "two"])
+        self.assertTrue(payload["truncate"])
+        self.assertEqual(timeout, 120.0)
+
+    def test_rejects_wrong_embedding_count(self) -> None:
+        def transport(request: Request, *, timeout: float) -> FakeResponse:
+            return FakeResponse(b'{"embeddings":[[0.1,0.2]]}')
+
+        with self.assertRaisesRegex(OllamaResponseError, "invalid response"):
+            OllamaEmbeddingClient(transport=transport).embed(["one", "two"])

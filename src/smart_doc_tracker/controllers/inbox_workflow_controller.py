@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+from pathlib import Path
 
 from ..cli.dependencies import CliDependencies
 from ..cli.serializer import JsonResultSerializer
@@ -15,14 +16,17 @@ from ..db.database import (
     DatabaseError,
     MongoDocumentRepository,
 )
+from ..db.vector_database import VectorDatabaseError
 from ..inbox import InboxError
 from ..infrastructure.ollama import OllamaClient, OllamaConfigurationError
 from ..notifier.desktop import DesktopNotificationError, PlyerDesktopNotifier
 from ..pipeline import (
     ExpirationTrackingPipeline,
+    ExtractedTextReporter,
     InboxProcessingPipeline,
     InboxProcessingResult,
 )
+from .rag_workflow_controller import create_document_vector_index
 
 
 @dataclass(slots=True)
@@ -30,6 +34,29 @@ class InboxWorkflowController:
     """Coordinate multi-document inbox workflows and their CLI output."""
 
     dependencies: CliDependencies
+
+    def _extracted_text_reporter(
+        self, args: argparse.Namespace
+    ) -> ExtractedTextReporter | None:
+        """Build the opt-in terminal reporter for sensitive extracted text."""
+        if not args.print_ocr_text:
+            return None
+
+        def report(source_path: Path, raw_text: str) -> None:
+            """Print one explicitly requested extraction result locally."""
+            print(
+                f"--- Extracted text: {source_path.name} ---",
+                file=self.dependencies.stderr,
+                flush=True,
+            )
+            print(raw_text, file=self.dependencies.stderr, flush=True)
+            print(
+                "--- End extracted text ---",
+                file=self.dependencies.stderr,
+                flush=True,
+            )
+
+        return report
 
     def process_inbox(self, args: argparse.Namespace) -> int:
         """Process supported documents currently present in the local inbox."""
@@ -55,6 +82,11 @@ class InboxWorkflowController:
                 dependencies.repository_factory or MongoDocumentRepository.connect
             )
             with create_repository() as repository:
+                vector_index = dependencies.document_vector_index or (
+                    create_document_vector_index(dependencies, args)
+                    if dependencies.repository_factory is None
+                    else None
+                )
                 result = InboxProcessingPipeline(
                     ocr=dependencies.ocr or TesseractOCR(),
                     parser=parser,
@@ -65,12 +97,15 @@ class InboxWorkflowController:
                         dependencies.pdf_extractor or LocalPDFTextExtractor()
                     ),
                     long_document_parser=long_parser,
+                    vector_index=vector_index,
+                    extracted_text_reporter=self._extracted_text_reporter(args),
                 ).process()
         except (
             InboxError,
             DatabaseConfigurationError,
             DatabaseError,
             OllamaConfigurationError,
+            VectorDatabaseError,
         ) as exc:
             print(f"Inbox processing failed: {exc}", file=dependencies.stderr)
             return 1
@@ -119,6 +154,11 @@ class InboxWorkflowController:
                 dependencies.repository_factory or MongoDocumentRepository.connect
             )
             with create_repository() as repository:
+                vector_index = dependencies.document_vector_index or (
+                    create_document_vector_index(dependencies, args)
+                    if dependencies.repository_factory is None
+                    else None
+                )
                 try:
                     print(
                         "[1/2] Scanning and processing the local document inbox...",
@@ -135,6 +175,8 @@ class InboxWorkflowController:
                             dependencies.pdf_extractor or LocalPDFTextExtractor()
                         ),
                         long_document_parser=long_parser,
+                        vector_index=vector_index,
+                        extracted_text_reporter=self._extracted_text_reporter(args),
                     ).process()
                     print(
                         "[1/2] Inbox processing completed: "
@@ -176,6 +218,7 @@ class InboxWorkflowController:
             DatabaseError,
             DesktopNotificationError,
             OllamaConfigurationError,
+            VectorDatabaseError,
         ) as exc:
             print(f"Complete pipeline failed: {exc}", file=dependencies.stderr)
             return 1

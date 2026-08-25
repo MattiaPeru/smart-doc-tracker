@@ -7,11 +7,21 @@ from ..db.database import (
     MongoDocumentRepository,
     StoredDocument,
 )
+from ..db.vector_database import (
+    ChromaDocumentVectorIndex,
+    VectorDatabaseConfigurationError,
+    VectorDatabaseDependencyError,
+    VectorDatabaseError,
+)
 
 __all__ = [
     "DatabaseConfigurationError",
     "DatabaseError",
+    "ChromaDocumentVectorIndex",
     "DocumentInsertResult",
     "MongoDocumentRepository",
     "StoredDocument",
+    "VectorDatabaseConfigurationError",
+    "VectorDatabaseDependencyError",
+    "VectorDatabaseError",
 ]
