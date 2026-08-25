@@ -151,6 +151,30 @@ class MongoDocumentRepositoryTests(TestCase):
         self.assertEqual(expiry_query["$gte"].date(), date(2030, 1, 8))
         self.assertEqual(expiry_query["$lt"].date(), date(2030, 1, 11))
 
+    def test_get_documents_expiring_in_year_uses_calendar_boundaries(self) -> None:
+        expected = self.repository.insert_document(
+            _document(expiry_date="2030-12-31"),
+            file_hash=self.file_hash,
+            created_at=self.created_at,
+        ).record
+        self.repository.insert_document(
+            _document(expiry_date="2031-01-01"),
+            file_hash="b" * 64,
+            created_at=self.created_at,
+        )
+
+        results = self.repository.get_documents_expiring_in_year(2030)
+
+        self.assertEqual(results, [expected])
+        expiry_query = self.collection.queries[-1]["expiry_date"]
+        self.assertEqual(expiry_query["$gte"].date(), date(2030, 1, 1))
+        self.assertEqual(expiry_query["$lt"].date(), date(2031, 1, 1))
+
+        for invalid_year in (0, 9999):
+            with self.subTest(year=invalid_year):
+                with self.assertRaises(ValueError):
+                    self.repository.get_documents_expiring_in_year(invalid_year)
+
     def test_searches_nested_dynamic_field_and_rejects_operator_paths(self) -> None:
         expected = self.repository.insert_document(
             _document(), file_hash=self.file_hash, created_at=self.created_at

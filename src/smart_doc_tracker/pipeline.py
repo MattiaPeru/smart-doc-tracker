@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date
@@ -326,6 +327,65 @@ class DocumentQuestionPipeline:
                 "The local model referenced a document outside the retrieved context."
             )
         return answer
+
+
+_QUESTION_YEAR = re.compile(r"\b\d{4}\b")
+_CURRENT_YEAR_PHRASES = (
+    "this year",
+    "current year",
+    "quest'anno",
+    "quest’anno",
+    "anno corrente",
+)
+
+
+def requested_expiry_year(question: str, *, today: date | None = None) -> int | None:
+    """Return one unambiguous year from an expiry-related question."""
+    candidate = question.strip().lower()
+    if not candidate or not any(term in candidate for term in ("expir", "scad")):
+        return None
+    years = {int(value) for value in _QUESTION_YEAR.findall(candidate)}
+    if len(years) == 1:
+        year = years.pop()
+        return year if 1 <= year < date.max.year else None
+    if years:
+        return None
+    if any(phrase in candidate for phrase in _CURRENT_YEAR_PHRASES):
+        return (today or date.today()).year
+    return None
+
+
+@dataclass(slots=True)
+class ExpirationYearQuestionPipeline:
+    """Answer calendar-year expiration questions from normalized stored dates."""
+
+    repository: DocumentRepository
+    today_provider: Callable[[], date] = date.today
+
+    def ask(self, year: int) -> DocumentAnswer:
+        """Return a deterministic answer for documents expiring in one year."""
+        records = self.repository.get_documents_expiring_in_year(year)
+        if not records:
+            return DocumentAnswer(
+                answer=f"No stored documents expire in {year}.",
+                document_ids=[],
+            )
+
+        today = self.today_provider()
+        statements: list[str] = []
+        document_ids: list[str] = []
+        for record in records:
+            expiry_date = record.document.expiry_date
+            if expiry_date is None:
+                continue
+            label = record.document.document_type.replace("_", " ").title()
+            verb = "expired" if expiry_date < today else "expires"
+            statements.append(f"{label} {verb} on {expiry_date.isoformat()}.")
+            document_ids.append(record.id)
+        return DocumentAnswer(
+            answer=" ".join(statements),
+            document_ids=document_ids,
+        )
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, date, datetime
 from io import StringIO
 from unittest import TestCase
 
 from smart_doc_tracker.core.parser import DocumentParsingError
+from smart_doc_tracker.db.database import StoredDocument
 from smart_doc_tracker.main import run
+from smart_doc_tracker.models.document import DocumentData
 from smart_doc_tracker.models.rag import RetrievedDocumentChunk
-from smart_doc_tracker.pipeline import DocumentQuestionPipeline
+from smart_doc_tracker.pipeline import (
+    DocumentQuestionPipeline,
+    ExpirationYearQuestionPipeline,
+    requested_expiry_year,
+)
 
 
 class FakeVectorIndex:
@@ -30,7 +37,76 @@ class FakeGenerator:
         return self.response
 
 
+class FakeExpirationRepository:
+    def __init__(self, documents: list[StoredDocument]) -> None:
+        self.documents = documents
+        self.year_calls: list[int] = []
+
+    def __enter__(self) -> FakeExpirationRepository:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        return None
+
+    def get_documents_expiring_in_year(self, year: int) -> list[StoredDocument]:
+        self.year_calls.append(year)
+        return [
+            record
+            for record in self.documents
+            if record.document.expiry_date is not None
+            and record.document.expiry_date.year == year
+        ]
+
+
+def _stored_document(
+    identifier: str, document_type: str, expiry_date: str
+) -> StoredDocument:
+    return StoredDocument(
+        id=identifier,
+        file_hash="a" * 64,
+        document=DocumentData(
+            document_type=document_type,
+            summary="A local document",
+            expiry_date=expiry_date,
+            issue_date=None,
+            extracted_data={},
+        ),
+        created_at=datetime(2026, 8, 1, tzinfo=UTC),
+    )
+
+
 class DocumentQuestionPipelineTests(TestCase):
+    def test_recognizes_unambiguous_expiry_year_questions(self) -> None:
+        self.assertEqual(requested_expiry_year("Which documents expire in 2026?"), 2026)
+        self.assertEqual(
+            requested_expiry_year(
+                "Quali documenti scadono quest'anno?",
+                today=date(2026, 8, 25),
+            ),
+            2026,
+        )
+        self.assertIsNone(requested_expiry_year("What happened in 2026?"))
+        self.assertIsNone(requested_expiry_year("What expires in 2026 or 2027?"))
+
+    def test_answers_expiry_year_question_from_normalized_dates(self) -> None:
+        certificate = _stored_document(
+            "certificate-id", "sport_practicability_certificate", "2026-08-21"
+        )
+        identity_card = _stored_document("identity-id", "identity_card", "2034-06-03")
+        repository = FakeExpirationRepository([certificate, identity_card])
+
+        answer = ExpirationYearQuestionPipeline(
+            repository,
+            today_provider=lambda: date(2026, 8, 25),
+        ).ask(2026)
+
+        self.assertEqual(repository.year_calls, [2026])
+        self.assertEqual(answer.document_ids, ["certificate-id"])
+        self.assertEqual(
+            answer.answer,
+            "Sport Practicability Certificate expired on 2026-08-21.",
+        )
+
     def test_answers_from_retrieved_context_and_preserves_source_ids(self) -> None:
         index = FakeVectorIndex(
             [
@@ -97,3 +173,36 @@ class DocumentQuestionPipelineTests(TestCase):
         )
         self.assertEqual(index.calls, [("When does it expire?", 2)])
         self.assertIn("Local document answer completed", stderr.getvalue())
+
+    def test_cli_bypasses_vector_search_and_generation_for_expiry_year(self) -> None:
+        certificate = _stored_document(
+            "certificate-id", "sport_practicability_certificate", "2020-08-21"
+        )
+        identity_card = _stored_document("identity-id", "identity_card", "2034-06-03")
+        repository = FakeExpirationRepository([certificate, identity_card])
+        index = FakeVectorIndex([])
+        generator = FakeGenerator("not used")
+        stdout = StringIO()
+        stderr = StringIO()
+
+        exit_code = run(
+            ["--ask-documents", "Which documents expired in 2020?"],
+            repository_factory=lambda: repository,
+            document_vector_index=index,
+            rag_generator=generator,
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(repository.year_calls, [2020])
+        self.assertEqual(index.calls, [])
+        self.assertEqual(generator.calls, [])
+        self.assertEqual(
+            json.loads(stdout.getvalue()),
+            {
+                "answer": "Sport Practicability Certificate expired on 2020-08-21.",
+                "document_ids": ["certificate-id"],
+            },
+        )
+        self.assertIn("normalized local expiration dates", stderr.getvalue())
