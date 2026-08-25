@@ -1,1 +1,22 @@
-- Some operation will be asynchronous (like data processing when the user uploads a file).K
+- Some operation will be asynchronous (like data processing when the user uploads a file).
+
+Suggested structure of documentation:
+README.md
+LICENSE
+CHANGELOG.md
+CONTRIBUTING.md
+SECURITY.md
+docs/
+├── architecture.md
+├── privacy-and-security.md
+├── user-guide.md
+├── operations.md
+├── troubleshooting.md
+├── data-model.md
+├── development.md
+├── testing.md
+└── adr/
+    ├── 0001-offline-first.md
+    ├── 0002-hybrid-document-schema.md
+    ├── 0003-local-persistence.md
+    └── 0004-local-rag.md
