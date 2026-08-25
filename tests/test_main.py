@@ -58,6 +58,7 @@ class FakeRepository:
         self.insert_calls: list[tuple[DocumentData, str]] = []
         self.expiration_calls: list[tuple[int, date | None]] = []
         self.section_calls: list[tuple[str, tuple[StructuredDocumentSection, ...]]] = []
+        self.update_calls: list[tuple[str, DocumentData]] = []
 
     def __enter__(self) -> FakeRepository:
         return self
@@ -83,6 +84,22 @@ class FakeRepository:
 
     def get_document_by_id(self, document_id: str) -> StoredDocument | None:
         return next((item for item in self.documents if item.id == document_id), None)
+
+    def update_document(
+        self, document_id: str, document: DocumentData
+    ) -> StoredDocument | None:
+        self.update_calls.append((document_id, document))
+        for index, item in enumerate(self.documents):
+            if item.id == document_id:
+                updated = StoredDocument(
+                    id=item.id,
+                    file_hash=item.file_hash,
+                    document=document,
+                    created_at=item.created_at,
+                )
+                self.documents[index] = updated
+                return updated
+        return None
 
     def get_expiring_documents(
         self, days_threshold: int, *, today: date | None = None
@@ -337,6 +354,93 @@ class MainTests(TestCase):
         self.assertIn("[1/1] Database read completed", list_stderr.getvalue())
         self.assertIn("[1/1] Reading the stored document", get_stderr.getvalue())
         self.assertIn("[1/1] Database read completed", get_stderr.getvalue())
+
+    def test_run_updates_selected_stored_document_fields(self) -> None:
+        record = StoredDocument(
+            id="64b64b64b64b64b64b64b64b",
+            file_hash="a" * 64,
+            document=DocumentData(
+                document_type="invoice",
+                summary="Original summary",
+                expiry_date="2026-12-31",
+                issue_date="2026-08-01",
+                extracted_data={"invoice_number": "42"},
+            ),
+            created_at=datetime(2026, 8, 11, 12, 0, tzinfo=UTC),
+        )
+        repository = FakeRepository([record])
+        stdout = StringIO()
+        stderr = StringIO()
+
+        exit_code = run(
+            [
+                "--update-stored",
+                record.id,
+                "--summary",
+                "Corrected summary",
+                "--expiry-date",
+                "null",
+                "--extracted-data-json",
+                '{"invoice_number":"43","paid":true}',
+            ],
+            repository_factory=lambda: repository,
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["document"]["summary"], "Corrected summary")
+        self.assertIsNone(payload["document"]["expiry_date"])
+        self.assertEqual(
+            payload["document"]["extracted_data"],
+            {"invoice_number": "43", "paid": True},
+        )
+        self.assertEqual(payload["document"]["issue_date"], "2026-08-01")
+        self.assertEqual(repository.update_calls[0][0], record.id)
+        self.assertIn("Database update completed", stderr.getvalue())
+
+    def test_run_rejects_invalid_stored_document_updates(self) -> None:
+        record = StoredDocument(
+            id="64b64b64b64b64b64b64b64b",
+            file_hash="a" * 64,
+            document=DocumentData(
+                document_type="invoice",
+                summary="Original summary",
+                expiry_date=None,
+                issue_date=None,
+                extracted_data={},
+            ),
+            created_at=datetime(2026, 8, 11, 12, 0, tzinfo=UTC),
+        )
+        repository = FakeRepository([record])
+
+        no_fields_error = StringIO()
+        no_fields_code = run(
+            ["--update-stored", record.id],
+            repository_factory=lambda: repository,
+            stderr=no_fields_error,
+        )
+        invalid_json_error = StringIO()
+        invalid_json_code = run(
+            ["--update-stored", record.id, "--extracted-data-json", "not-json"],
+            repository_factory=lambda: repository,
+            stderr=invalid_json_error,
+        )
+        invalid_date_error = StringIO()
+        invalid_date_code = run(
+            ["--update-stored", record.id, "--issue-date", "tomorrow"],
+            repository_factory=lambda: repository,
+            stderr=invalid_date_error,
+        )
+
+        self.assertEqual(no_fields_code, 2)
+        self.assertIn("requires at least one edit field", no_fields_error.getvalue())
+        self.assertEqual(invalid_json_code, 2)
+        self.assertIn("must contain valid JSON", invalid_json_error.getvalue())
+        self.assertEqual(invalid_date_code, 2)
+        self.assertIn("fields are invalid", invalid_date_error.getvalue())
+        self.assertEqual(repository.update_calls, [])
 
     def test_store_requires_structured_output(self) -> None:
         stderr = StringIO()

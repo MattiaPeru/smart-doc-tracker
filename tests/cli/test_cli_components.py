@@ -30,6 +30,25 @@ class CliArgumentParserTests(TestCase):
         self.assertEqual(arguments.language, "ita")
         self.assertTrue(arguments.print_ocr_text)
 
+    def test_parses_stored_document_update_options(self) -> None:
+        arguments = CliArgumentParser().parse(
+            [
+                "--update-stored",
+                "64b64b64b64b64b64b64b64b",
+                "--summary",
+                "Corrected summary",
+                "--expiry-date",
+                "null",
+                "--extracted-data-json",
+                '{"reference":"A-42"}',
+            ]
+        )
+
+        self.assertEqual(arguments.update_stored, "64b64b64b64b64b64b64b64b")
+        self.assertEqual(arguments.summary, "Corrected summary")
+        self.assertEqual(arguments.expiry_date, "null")
+        self.assertEqual(arguments.extracted_data_json, '{"reference":"A-42"}')
+
 
 class JsonResultSerializerTests(TestCase):
     def test_serializes_insert_result_and_writes_one_json_value(self) -> None:

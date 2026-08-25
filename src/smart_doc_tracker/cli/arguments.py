@@ -64,6 +64,11 @@ class CliArgumentParser:
             help="Print one stored document by its MongoDB identifier.",
         )
         operation_group.add_argument(
+            "--update-stored",
+            metavar="DOCUMENT_ID",
+            help="Update selected fields of one stored document.",
+        )
+        operation_group.add_argument(
             "--check-expirations",
             action="store_true",
             help="Check upcoming expirations and send local desktop alerts once.",
@@ -82,6 +87,27 @@ class CliArgumentParser:
             "--ask-documents",
             metavar="QUESTION",
             help="Ask a grounded question across locally indexed documents.",
+        )
+        parser.add_argument(
+            "--document-type",
+            help="Replacement document type for --update-stored.",
+        )
+        parser.add_argument(
+            "--summary",
+            help="Replacement summary for --update-stored.",
+        )
+        parser.add_argument(
+            "--expiry-date",
+            help="Replacement expiry date, or 'null' to clear it.",
+        )
+        parser.add_argument(
+            "--issue-date",
+            help="Replacement issue date, or 'null' to clear it.",
+        )
+        parser.add_argument(
+            "--extracted-data-json",
+            metavar="JSON_OBJECT",
+            help="Replacement dynamic field object for --update-stored.",
         )
         parser.add_argument(
             "--inbox-dir",

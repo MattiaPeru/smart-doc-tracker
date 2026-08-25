@@ -46,6 +46,11 @@ class FakeCollection:
     ) -> FakeUpdateResult:
         existing = self.find_one(filter)
         if existing is not None:
+            if "$set" in update:
+                for index, document in enumerate(self.documents):
+                    if _matches(document, filter):
+                        self.documents[index].update(deepcopy(update["$set"]))
+                        break
             return FakeUpdateResult(None)
         identifier = ObjectId()
         self.documents.append({"_id": identifier, **deepcopy(update["$setOnInsert"])})
@@ -131,6 +136,29 @@ class MongoDocumentRepositoryTests(TestCase):
         self.assertEqual(found, inserted.record)
         self.assertEqual(self.repository.get_all_documents(), [inserted.record])
         self.assertIsNone(self.repository.get_document_by_id("not-an-object-id"))
+
+    def test_updates_validated_fields_and_preserves_record_metadata(self) -> None:
+        inserted = self.repository.insert_document(
+            _document(), file_hash=self.file_hash, created_at=self.created_at
+        ).record
+        replacement = DocumentData(
+            document_type="vehicle_policy",
+            summary="Updated policy summary",
+            expiry_date=None,
+            issue_date="2026-02-03",
+            extracted_data={"policy_number": "P-456", "active": True},
+        )
+
+        updated = self.repository.update_document(inserted.id, replacement)
+
+        self.assertIsNotNone(updated)
+        assert updated is not None
+        self.assertEqual(updated.document, replacement)
+        self.assertEqual(updated.file_hash, inserted.file_hash)
+        self.assertEqual(updated.created_at, inserted.created_at)
+        self.assertIsNone(self.collection.documents[0]["expiry_date"])
+        self.assertIsInstance(self.collection.documents[0]["issue_date"], datetime)
+        self.assertIsNone(self.repository.update_document("invalid", replacement))
 
     def test_get_expiring_documents_uses_inclusive_day_threshold(self) -> None:
         expected = self.repository.insert_document(

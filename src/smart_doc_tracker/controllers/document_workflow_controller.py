@@ -27,6 +27,30 @@ class DocumentWorkflowController:
             return StoredDocumentController(self.dependencies).get_stored(
                 args.get_stored
             )
+        if args.update_stored is not None:
+            return StoredDocumentController(self.dependencies).update_stored(
+                args.update_stored,
+                document_type=args.document_type,
+                summary=args.summary,
+                expiry_date=args.expiry_date,
+                issue_date=args.issue_date,
+                extracted_data_json=args.extracted_data_json,
+            )
+        if any(
+            value is not None
+            for value in (
+                args.document_type,
+                args.summary,
+                args.expiry_date,
+                args.issue_date,
+                args.extracted_data_json,
+            )
+        ):
+            print(
+                "Input error: document edit fields require --update-stored.",
+                file=self.dependencies.stderr,
+            )
+            return 2
         if args.ask_documents is not None:
             return RagWorkflowController(self.dependencies).ask_documents(args)
 

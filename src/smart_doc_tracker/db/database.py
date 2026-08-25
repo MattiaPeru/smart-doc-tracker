@@ -231,6 +231,28 @@ class MongoDocumentRepository:
         except PyMongoError as exc:
             raise DatabaseError("Documents could not be read locally.") from exc
 
+    def update_document(
+        self,
+        document_id: str,
+        document: DocumentData,
+    ) -> StoredDocument | None:
+        """Replace validated document fields and preserve persistence metadata."""
+        if not ObjectId.is_valid(document_id):
+            return None
+        identifier = ObjectId(document_id)
+        payload = document.model_dump(mode="python")
+        payload["expiry_date"] = _date_to_datetime(document.expiry_date)
+        payload["issue_date"] = _date_to_datetime(document.issue_date)
+        try:
+            self._collection.update_one(
+                {"_id": identifier},
+                {"$set": payload},
+            )
+            stored = self._collection.find_one({"_id": identifier})
+        except PyMongoError as exc:
+            raise DatabaseError("The document could not be updated locally.") from exc
+        return _to_stored_document(stored) if stored is not None else None
+
     def get_expiring_documents(
         self, days_threshold: int, *, today: date | None = None
     ) -> list[StoredDocument]:

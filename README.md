@@ -127,6 +127,22 @@ Read one document using the `id` printed by either command:
 smart-doc-tracker --get-stored 64b64b64b64b64b64b64b64b
 ```
 
+Update one or more validated fields without changing the source-file hash or the
+record creation time:
+
+```powershell
+smart-doc-tracker --update-stored 64b64b64b64b64b64b64b64b --summary "Corrected summary" --expiry-date 2031-06-30
+```
+
+The available edit options are `--document-type`, `--summary`, `--expiry-date`,
+`--issue-date`, and `--extracted-data-json`. Pass `null` to either date option to
+clear it. Dynamic data is replaced as one validated JSON object; keys must use
+English `snake_case`:
+
+```powershell
+smart-doc-tracker --update-stored 64b64b64b64b64b64b64b64b --extracted-data-json '{"policy_number":"P-456","holder":{"city":"Rome"}}'
+```
+
 The default Ollama endpoint is `http://127.0.0.1:11434`. The client rejects remote
 hosts, HTTPS endpoints, credentials, URL paths, and endpoints without an explicit
 port. A different locally installed model can be selected with `--model`.

@@ -46,6 +46,14 @@ class DocumentRepository(Protocol):
         """Return one stored document by identifier when present."""
         ...
 
+    def update_document(
+        self,
+        document_id: str,
+        document: DocumentData,
+    ) -> StoredDocument | None:
+        """Replace validated document fields while preserving record metadata."""
+        ...
+
     def get_expiring_documents(
         self,
         days_threshold: int,
