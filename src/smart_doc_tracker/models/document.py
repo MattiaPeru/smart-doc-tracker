@@ -15,6 +15,7 @@ _DATE_FORMATS = ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d")
 _MISSING_DATE_VALUES = frozenset(
     {"", "none", "null", "n/a", "unknown", "not_applicable"}
 )
+_INCOMPLETE_CONTAINER_PLACEHOLDER = re.compile(r"^[\[{]+$")
 
 
 class DocumentData(BaseModel):
@@ -80,6 +81,26 @@ class DocumentData(BaseModel):
             raise ValueError("extracted_data numbers must be finite")
         elif value is not None and not isinstance(value, (str, int, float, bool)):
             raise ValueError("extracted_data values must be JSON-compatible")
+
+    def ensure_complete_dynamic_values(self) -> None:
+        """Reject literal opening delimiters emitted as incomplete containers."""
+        self._ensure_complete_value(self.extracted_data)
+
+    @classmethod
+    def _ensure_complete_value(cls, value: object) -> None:
+        """Validate dynamic values without disclosing their contents in errors."""
+        if isinstance(value, dict):
+            for nested_value in value.values():
+                cls._ensure_complete_value(nested_value)
+        elif isinstance(value, list):
+            for item in value:
+                cls._ensure_complete_value(item)
+        elif isinstance(value, str) and _INCOMPLETE_CONTAINER_PLACEHOLDER.fullmatch(
+            value.strip()
+        ):
+            raise ValueError(
+                "extracted_data contains an incomplete JSON container placeholder"
+            )
 
 
 @dataclass(frozen=True, slots=True)

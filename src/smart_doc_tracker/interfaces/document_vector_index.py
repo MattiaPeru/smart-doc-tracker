@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from ..models.document import DocumentData
-from ..models.rag import RetrievedDocumentChunk
+from ..models.rag import IndexedDocumentFragment, RetrievedDocumentChunk
 
 
 class DocumentVectorIndex(Protocol):
@@ -23,6 +23,10 @@ class DocumentVectorIndex(Protocol):
 
     def query(self, question: str, *, limit: int = 5) -> list[RetrievedDocumentChunk]:
         """Return the fragments most semantically relevant to a question."""
+        ...
+
+    def get_document_fragments(self, document_id: str) -> list[IndexedDocumentFragment]:
+        """Return every stored content fragment for one document."""
         ...
 
     def snapshot_document(self, document_id: str) -> dict[str, Any]:

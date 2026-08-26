@@ -96,3 +96,35 @@ class LongDocumentParserTests(TestCase):
             result.document.extracted_data["status"],
             ["draft", "approved"],
         )
+
+    def test_retries_a_chunk_with_incomplete_container_placeholders(self) -> None:
+        generator = SequencedGenerator(
+            [
+                {
+                    "document_type": "resume",
+                    "summary": "A resume.",
+                    "expiry_date": None,
+                    "issue_date": None,
+                    "extracted_data": {"education": "[{"},
+                },
+                {
+                    "document_type": "resume",
+                    "summary": "A resume.",
+                    "expiry_date": None,
+                    "issue_date": None,
+                    "extracted_data": {
+                        "education": [{"institution": "Local University"}]
+                    },
+                },
+            ]
+        )
+
+        result = LongDocumentParser(generator).parse_pages(
+            (ExtractedPage(1, "Resume contents", False),)
+        )
+
+        self.assertEqual(
+            result.document.extracted_data["education"],
+            [{"institution": "Local University"}],
+        )
+        self.assertEqual(len(generator.calls), 2)

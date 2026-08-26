@@ -160,3 +160,18 @@ class DocumentMutationPipelineTests(TestCase):
         self.assertIsNone(self.repository.record)
         self.assertEqual(self.vector.deleted, ["doc-1"])
         self.assertEqual(finalized, [])
+
+    def test_rejects_incomplete_container_before_persistence(self) -> None:
+        document = _document("Malformed")
+        document.extracted_data["education"] = "[{"
+        original = self.repository.record
+
+        with self.assertRaisesRegex(ValueError, "incomplete JSON container"):
+            self.pipeline.confirm(
+                document,
+                file_hash="b" * 64,
+                raw_text="Local source text",
+            )
+
+        self.assertIs(self.repository.record, original)
+        self.assertEqual(self.vector.deleted, [])

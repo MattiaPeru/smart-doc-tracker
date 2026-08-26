@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict
 
 from ..db.database import StoredDocument
 from ..models.document import DocumentData
+from ..models.rag import IndexedDocumentFragment
 from .jobs import UploadJob
 from .pending import PendingDocument
 
@@ -97,4 +98,38 @@ class PendingDocumentResponse(BaseModel):
             file_name=pending.file_name,
             document=pending.document,
             created_at=pending.created_at,
+        )
+
+
+class IndexedFragmentResponse(BaseModel):
+    """Browser-safe representation of one local Chroma content fragment."""
+
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+    fragment_id: str
+    source: str
+    content: str
+
+
+class DocumentIndexedContentResponse(BaseModel):
+    """Complete indexed content for one locally stored document."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    document_id: str
+    fragments: list[IndexedFragmentResponse]
+
+    @classmethod
+    def from_fragments(
+        cls,
+        document_id: str,
+        fragments: list[IndexedDocumentFragment],
+    ) -> DocumentIndexedContentResponse:
+        """Create an HTTP response without exposing stored embeddings."""
+        return cls(
+            document_id=document_id,
+            fragments=[
+                IndexedFragmentResponse.model_validate(fragment)
+                for fragment in fragments
+            ],
         )

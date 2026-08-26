@@ -20,6 +20,16 @@ class FakeGenerator:
         return self.response
 
 
+class SequencedGenerator:
+    def __init__(self, responses: list[str]) -> None:
+        self.responses = responses
+        self.calls: list[tuple[str, str]] = []
+
+    def generate(self, *, system_prompt: str, user_prompt: str) -> str:
+        self.calls.append((system_prompt, user_prompt))
+        return self.responses[len(self.calls) - 1]
+
+
 class DocumentParserTests(TestCase):
     def test_system_prompt_contains_explicit_json_response_structure(self) -> None:
         self.assertIn('"document_type": "document_category"', SYSTEM_PROMPT)
@@ -36,6 +46,8 @@ class DocumentParserTests(TestCase):
         self.assertIn(
             "Preserve the original language, accents, and Unicode", SYSTEM_PROMPT
         )
+        self.assertIn("real JSON values", SYSTEM_PROMPT)
+        self.assertIn("incomplete container placeholders", SYSTEM_PROMPT)
 
     def test_parses_valid_generated_json(self) -> None:
         generator = FakeGenerator(
@@ -69,6 +81,73 @@ class DocumentParserTests(TestCase):
         document = DocumentParser(generator).parse("OCR contents")
 
         self.assertEqual(document.document_type, "invoice")
+
+    def test_recovers_nested_containers_encoded_as_json_strings(self) -> None:
+        generator = FakeGenerator(
+            json.dumps(
+                {
+                    "document_type": "resume",
+                    "summary": "A resume",
+                    "expiry_date": None,
+                    "issue_date": None,
+                    "extracted_data": {
+                        "education": '[{"institution":"Local University"}]',
+                        "skills": '["Python", "SQL"]',
+                    },
+                }
+            )
+        )
+
+        document = DocumentParser(generator).parse("OCR contents")
+
+        self.assertEqual(
+            document.extracted_data["education"],
+            [{"institution": "Local University"}],
+        )
+        self.assertEqual(document.extracted_data["skills"], ["Python", "SQL"])
+
+    def test_retries_incomplete_container_placeholders_once(self) -> None:
+        incomplete = {
+            "document_type": "resume",
+            "summary": "A resume",
+            "expiry_date": None,
+            "issue_date": None,
+            "extracted_data": {"education": "[{", "skills": "["},
+        }
+        corrected = {
+            **incomplete,
+            "extracted_data": {
+                "education": [{"institution": "Local University"}],
+                "skills": ["Python"],
+            },
+        }
+        generator = SequencedGenerator([json.dumps(incomplete), json.dumps(corrected)])
+
+        document = DocumentParser(generator).parse("OCR contents")
+
+        self.assertEqual(
+            document.extracted_data["education"],
+            [{"institution": "Local University"}],
+        )
+        self.assertEqual(len(generator.calls), 2)
+        self.assertIn("previous extraction was rejected", generator.calls[1][0])
+
+    def test_rejects_placeholder_when_local_retry_is_also_incomplete(self) -> None:
+        incomplete = json.dumps(
+            {
+                "document_type": "resume",
+                "summary": "A resume",
+                "expiry_date": None,
+                "issue_date": None,
+                "extracted_data": {"education": "[{"},
+            }
+        )
+        generator = SequencedGenerator([incomplete, incomplete])
+
+        with self.assertRaisesRegex(DocumentParsingError, "not valid structured"):
+            DocumentParser(generator).parse("OCR contents")
+
+        self.assertEqual(len(generator.calls), 2)
 
     def test_rejects_empty_ocr_without_calling_generator(self) -> None:
         generator = FakeGenerator("{}")

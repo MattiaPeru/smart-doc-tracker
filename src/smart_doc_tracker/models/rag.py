@@ -17,6 +17,15 @@ class RetrievedDocumentChunk:
     distance: float
 
 
+@dataclass(frozen=True, slots=True)
+class IndexedDocumentFragment:
+    """One persisted local fragment belonging to a specific document."""
+
+    fragment_id: str
+    content: str
+    source: str
+
+
 class DocumentAnswer(BaseModel):
     """Grounded answer produced from retrieved local document fragments."""
 

@@ -37,6 +37,7 @@ from ..db.database import (
 )
 from ..db.vector_database import (
     ChromaDocumentVectorIndex,
+    VectorDatabaseError,
     collection_name_for_embedding_model,
 )
 from ..infrastructure.ollama import OllamaClient, OllamaEmbeddingClient
@@ -47,7 +48,12 @@ from ..mutation_pipeline import CoordinatedMutationError, DocumentMutationPipeli
 from ..pipeline import DocumentProcessingPipeline, DocumentProcessingResult
 from .jobs import ProgressReporter, UploadJobService, UploadProcessor
 from .pending import PendingDocumentService
-from .schemas import DocumentResponse, PendingDocumentResponse, UploadJobResponse
+from .schemas import (
+    DocumentIndexedContentResponse,
+    DocumentResponse,
+    PendingDocumentResponse,
+    UploadJobResponse,
+)
 
 RepositoryFactory = Callable[[], DocumentRepository]
 _WEB_ROOT = Path(__file__).parent
@@ -206,6 +212,34 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
             alert_days=alert_days,
         )
 
+    @app.get(
+        "/api/documents/{document_id}/indexed-content",
+        response_model=DocumentIndexedContentResponse,
+    )
+    def get_document_indexed_content(
+        document_id: str,
+        repository: Repository,
+    ) -> DocumentIndexedContentResponse:
+        """Return every local Chroma content fragment for one stored document."""
+        if repository.get_document_by_id(document_id) is None:
+            raise HTTPException(status_code=404, detail="Document not found.")
+        if resolved.vector_index is None:
+            raise HTTPException(
+                status_code=503,
+                detail="The local vector database is unavailable.",
+            )
+        try:
+            fragments = resolved.vector_index.get_document_fragments(document_id)
+        except (ValueError, VectorDatabaseError) as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="The indexed document content is unavailable.",
+            ) from exc
+        return DocumentIndexedContentResponse.from_fragments(
+            document_id,
+            fragments,
+        )
+
     @app.put("/api/documents/{document_id}", response_model=DocumentResponse)
     def update_document(
         document_id: str,
@@ -215,6 +249,8 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
         service = _require_mutation_service(mutations)
         try:
             updated = service.update(document_id, document)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         except CoordinatedMutationError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         if updated is None:
@@ -276,6 +312,8 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
                 sections=pending.sections,
                 finalize=lambda: pending_documents.archive(pending.id),
             )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         except (CoordinatedMutationError, FileHashingError) as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         return DocumentResponse.from_record(

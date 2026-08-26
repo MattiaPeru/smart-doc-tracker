@@ -169,6 +169,11 @@ dialog::backdrop { background: rgb(18 28 24 / 55%); }
 .detail-grid dt { color: var(--muted); }
 .detail-grid dd { margin: 0; }
 pre { overflow: auto; border-radius: 8px; padding: 14px; background: #f1f2ef; white-space: pre-wrap; }
+.indexed-content-section { margin-top: 22px; border-top: 1px solid var(--line); padding-top: 18px; }
+.sensitive-hint { color: var(--muted); font-size: .85rem; }
+.indexed-fragment { margin-top: 12px; }
+.indexed-fragment h4 { margin: 0 0 6px; color: var(--muted); font-size: .8rem; font-weight: 600; text-transform: capitalize; }
+.indexed-fragment pre { max-height: 340px; margin: 0; }
 .dialog-actions { margin-top: 20px; }
 .date-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .date-fields > div { display: grid; gap: 9px; }

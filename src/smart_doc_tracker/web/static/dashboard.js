@@ -94,14 +94,52 @@ function showDetail(item) {
     </dl>
     <h3>Extracted attributes</h3>
     <pre>${escapeHtml(JSON.stringify(item.extracted_data, null, 2))}</pre>
+    <section class="indexed-content-section">
+      <div class="attributes-heading"><h3>Complete indexed content</h3>
+      <button id="load-indexed-content" class="secondary compact" type="button">Load content</button></div>
+      <p class="sensitive-hint">Loads every summary, structured-data, and raw-text fragment stored locally in ChromaDB.</p>
+      <div id="indexed-content" aria-live="polite"></div>
+    </section>
     <div class="actions dialog-actions"><button id="edit-document" type="button">Edit</button>
     <button id="delete-document" class="danger-button" type="button">Delete</button></div>`;
+  detail.querySelector("#load-indexed-content").addEventListener("click", (event) => {
+    loadIndexedContent(item.id, event.currentTarget, detail.querySelector("#indexed-content"));
+  });
   detail.querySelector("#edit-document").addEventListener("click", () => {
     dialog.close();
     showEditor({ id: item.id, document: item }, false);
   });
   detail.querySelector("#delete-document").addEventListener("click", () => deleteDocument(item.id));
   dialog.showModal();
+}
+
+async function loadIndexedContent(documentId, button, container) {
+  button.disabled = true;
+  button.textContent = "Loading...";
+  container.textContent = "Reading local index...";
+  try {
+    const response = await fetch(`/api/documents/${documentId}/indexed-content`);
+    const payload = await response.json();
+    if (!response.ok) throw new Error(apiError(payload, "Indexed content could not be loaded."));
+    container.replaceChildren();
+    payload.fragments.forEach((fragment) => {
+      const article = document.createElement("article");
+      article.className = "indexed-fragment";
+      const heading = document.createElement("h4");
+      heading.textContent = `${fragment.source.replaceAll("_", " ")} · ${fragment.fragment_id}`;
+      const content = document.createElement("pre");
+      content.textContent = fragment.content;
+      article.append(heading, content);
+      container.append(article);
+    });
+    if (!payload.fragments.length) container.textContent = "No indexed content is available for this document.";
+    button.textContent = "Reload content";
+  } catch (error) {
+    container.textContent = error.message;
+    button.textContent = "Try again";
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function showEditor(item, isPending) {

@@ -63,3 +63,18 @@ class DocumentDataTests(TestCase):
                     "raw_text": "sensitive contents",
                 }
             )
+
+    def test_detects_incomplete_container_placeholders_on_demand(self) -> None:
+        document = DocumentData(
+            document_type="resume",
+            summary="A resume",
+            expiry_date=None,
+            issue_date=None,
+            extracted_data={"education": "[{"},
+        )
+
+        with self.assertRaisesRegex(ValueError, "incomplete JSON container"):
+            document.ensure_complete_dynamic_values()
+
+        document.extracted_data["education"] = "[Confidential]"
+        document.ensure_complete_dynamic_values()

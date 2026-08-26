@@ -150,6 +150,32 @@ class ChromaDocumentVectorIndexTests(TestCase):
         self.assertEqual(collection.query_payload["n_results"], 3)
         self.assertIn("query_embeddings", collection.query_payload)
 
+    def test_returns_every_document_fragment_in_stable_identifier_order(self) -> None:
+        collection = FakeCollection()
+        collection.get_payload = {
+            "ids": ["doc-1:raw:0002", "doc-1:summary", "doc-1:raw:0001"],
+            "documents": ["second", "Summary", "first"],
+            "metadatas": [
+                {"document_id": "doc-1", "source": "raw_text"},
+                {"document_id": "doc-1", "source": "summary"},
+                {"document_id": "doc-1", "source": "raw_text"},
+            ],
+        }
+        index = ChromaDocumentVectorIndex(
+            embedding_generator=FakeEmbeddingGenerator(),
+            client_factory=lambda _host, _port: FakeClient(collection),
+        )
+
+        fragments = index.get_document_fragments("doc-1")
+
+        self.assertEqual(
+            [fragment.fragment_id for fragment in fragments],
+            ["doc-1:raw:0001", "doc-1:raw:0002", "doc-1:summary"],
+        )
+        self.assertEqual(
+            [fragment.content for fragment in fragments], ["first", "second", "Summary"]
+        )
+
     def test_snapshots_deletes_and_restores_all_document_fragments(self) -> None:
         collection = FakeCollection()
         collection.get_payload = {

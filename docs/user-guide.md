@@ -152,22 +152,24 @@ Exit status `0` means the requested workflow completed, `1` means an operational
 processing failure, and `2` means invalid command input. `argparse` can also terminate
 with status `2` for syntax errors.
 
-## Planned web interface
+## Local web interface
 
-The local FastAPI application is expected to provide:
+The local FastAPI application provides:
 
 - drag-and-drop document upload;
 - asynchronous progress and failure status;
 - paginated document browsing and detail views;
+- on-demand display of every summary, structured-data, and raw-text fragment
+  stored for a document in local ChromaDB;
 - validated edits and exact database filters;
 - local natural-language questions with source links;
 - an expiration dashboard and minimal in-app notifications;
 - confirmed document deletion with an explicit description of affected data.
 
-The initial release will support one user on the same host and bind only to loopback.
+The application supports one user on the same host and binds only to loopback.
 Uploading a document will return immediately to a job-status view while OCR, parsing,
 storage, and indexing continue through a bounded local worker. Closing the browser
-must not silently discard an accepted job.
+does not silently discard an accepted job.
 
 Before confirming deletion, the UI must state whether the archived original file is
 also removed and whether a backup may retain a copy. A successful result must mean

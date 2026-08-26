@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from smart_doc_tracker.db.database import DocumentInsertResult, StoredDocument
 from smart_doc_tracker.models.document import DocumentData
+from smart_doc_tracker.models.rag import IndexedDocumentFragment
 from smart_doc_tracker.pipeline import DocumentProcessingResult
 from smart_doc_tracker.web.app import WebDependencies, create_app
 
@@ -139,6 +140,15 @@ class FakeVectorIndex:
     def query(self, question: str, *, limit: int = 5) -> list[Any]:
         return []
 
+    def get_document_fragments(self, document_id: str) -> list[IndexedDocumentFragment]:
+        return [
+            IndexedDocumentFragment(
+                f"{document_id}:raw:0001",
+                "[Page 1]\nPrivate local text",
+                "raw_text",
+            )
+        ]
+
 
 class WebApplicationTests(TestCase):
     def setUp(self) -> None:
@@ -228,6 +238,33 @@ class WebApplicationTests(TestCase):
         )
         self.assertEqual(self.client.get("/api/documents/missing").status_code, 404)
 
+    def test_returns_complete_indexed_content_without_embeddings(self) -> None:
+        response = self.client.get("/api/documents/soon/indexed-content")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["document_id"], "soon")
+        self.assertEqual(
+            response.json()["fragments"][0],
+            {
+                "fragment_id": "soon:raw:0001",
+                "source": "raw_text",
+                "content": "[Page 1]\nPrivate local text",
+            },
+        )
+        self.assertNotIn("embedding", response.text)
+        self.assertEqual(
+            self.client.get("/api/documents/missing/indexed-content").status_code,
+            404,
+        )
+
+    def test_dashboard_loads_indexed_content_only_on_request(self) -> None:
+        script = self.client.get("/static/dashboard.js")
+
+        self.assertEqual(script.status_code, 200)
+        self.assertIn("Complete indexed content", script.text)
+        self.assertIn("/indexed-content`);", script.text)
+        self.assertIn("fragment.content", script.text)
+
     def test_upload_waits_for_confirmation_then_stores_and_archives(self) -> None:
         response = self.client.post(
             "/api/uploads",
@@ -280,6 +317,16 @@ class WebApplicationTests(TestCase):
         self.assertEqual(deleted.status_code, 204)
         self.assertEqual(self.vector_index.deletes, ["soon"])
         self.assertIsNone(self.repository.get_document_by_id("soon"))
+
+    def test_rejects_incomplete_container_placeholders_before_update(self) -> None:
+        payload = self.records[1].document.model_dump(mode="json")
+        payload["extracted_data"]["education"] = "[{"
+
+        response = self.client.put("/api/documents/soon", json=payload)
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("incomplete JSON container", response.json()["detail"])
+        self.assertEqual(self.vector_index.updates, [])
 
     def test_rejects_unsupported_or_empty_uploads(self) -> None:
         unsupported = self.client.post(

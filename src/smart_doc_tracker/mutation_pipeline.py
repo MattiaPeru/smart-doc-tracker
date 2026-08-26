@@ -35,6 +35,7 @@ class DocumentMutationPipeline:
         finalize: Callable[[], object] | None = None,
     ) -> DocumentInsertResult:
         """Persist and index one confirmed document before finalizing its source."""
+        document.ensure_complete_dynamic_values()
         inserted: DocumentInsertResult | None = None
         try:
             with self.repository_factory() as repository:
@@ -68,6 +69,7 @@ class DocumentMutationPipeline:
 
     def update(self, document_id: str, document: DocumentData) -> StoredDocument | None:
         """Update MongoDB and ChromaDB, restoring both snapshots on failure."""
+        document.ensure_complete_dynamic_values()
         try:
             with self.repository_factory() as repository:
                 previous = repository.get_document_by_id(document_id)

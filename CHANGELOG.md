@@ -7,6 +7,18 @@ and the project intends to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- On-demand display of complete per-document ChromaDB content in the local dashboard,
+  excluding embeddings.
+
+### Changed
+
+- Local parser prompts now require real JSON arrays and objects, and valid nested JSON
+  containers returned as strings are normalized before validation. Incomplete
+  container placeholders trigger one corrective local retry and are rejected before
+  persistence if they remain invalid.
+
 ### Planned
 
 - A loopback-only FastAPI web application.

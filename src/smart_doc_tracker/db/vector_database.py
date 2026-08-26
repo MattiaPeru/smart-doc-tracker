@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 
 from ..interfaces.embedding_generator import EmbeddingGenerator
 from ..models.document import DocumentData
-from ..models.rag import RetrievedDocumentChunk
+from ..models.rag import IndexedDocumentFragment, RetrievedDocumentChunk
 
 _COLLECTION_PREFIX = "smart_doc_tracker_documents"
 
@@ -222,6 +222,21 @@ class ChromaDocumentVectorIndex:
             ) from exc
         return _decode_query_result(result)
 
+    def get_document_fragments(self, document_id: str) -> list[IndexedDocumentFragment]:
+        """Return all persisted content for one document without embeddings."""
+        if not document_id.strip():
+            raise ValueError("document_id cannot be empty")
+        try:
+            result = self._collection.get(
+                where={"document_id": document_id},
+                include=["documents", "metadatas"],
+            )
+        except Exception as exc:
+            raise VectorDatabaseError(
+                "The indexed document content could not be read locally."
+            ) from exc
+        return _decode_document_fragments(result)
+
     def _fragments(
         self, raw_text: str, document: DocumentData
     ) -> list[tuple[str, str, str]]:
@@ -348,6 +363,40 @@ def _decode_query_result(result: Any) -> list[RetrievedDocumentChunk]:
             RetrievedDocumentChunk(document_id, content, source, float(distance))
         )
     return chunks
+
+
+def _decode_document_fragments(result: Any) -> list[IndexedDocumentFragment]:
+    """Validate and order the content returned by a filtered Chroma lookup."""
+    try:
+        identifiers = list(result["ids"])
+        documents = list(result["documents"])
+        metadatas = list(result["metadatas"])
+    except (KeyError, TypeError) as exc:
+        raise VectorDatabaseError(
+            "The local vector database returned invalid document content."
+        ) from exc
+    if not (len(identifiers) == len(documents) == len(metadatas)):
+        raise VectorDatabaseError(
+            "The local vector database returned invalid document content."
+        )
+
+    fragments: list[IndexedDocumentFragment] = []
+    for fragment_id, content, metadata in zip(
+        identifiers, documents, metadatas, strict=True
+    ):
+        if (
+            not isinstance(fragment_id, str)
+            or not isinstance(content, str)
+            or not isinstance(metadata, dict)
+            or not isinstance(metadata.get("source"), str)
+        ):
+            raise VectorDatabaseError(
+                "The local vector database returned invalid document content."
+            )
+        fragments.append(
+            IndexedDocumentFragment(fragment_id, content, metadata["source"])
+        )
+    return sorted(fragments, key=lambda fragment: fragment.fragment_id)
 
 
 def _optional_list(value: Any) -> list[Any]:
