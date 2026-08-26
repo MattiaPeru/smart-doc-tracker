@@ -29,3 +29,11 @@ class DocumentCollection(Protocol):
     def find(self, filter: Mapping[str, Any]) -> Any:
         """Return a cursor over matching records."""
         ...
+
+    def delete_one(self, filter: Mapping[str, Any]) -> Any:
+        """Delete one matching record."""
+        ...
+
+    def delete_many(self, filter: Mapping[str, Any]) -> Any:
+        """Delete every matching record."""
+        ...

@@ -54,6 +54,10 @@ class DocumentRepository(Protocol):
         """Replace validated document fields while preserving record metadata."""
         ...
 
+    def delete_document(self, document_id: str) -> StoredDocument | None:
+        """Delete one document and its local structured sections."""
+        ...
+
     def get_expiring_documents(
         self,
         days_threshold: int,

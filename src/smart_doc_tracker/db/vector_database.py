@@ -112,6 +112,87 @@ class ChromaDocumentVectorIndex:
                 "The document could not be indexed locally."
             ) from exc
 
+    def snapshot_document(self, document_id: str) -> dict[str, Any]:
+        """Capture all fragments needed for compensating local index operations."""
+        if not document_id.strip():
+            raise ValueError("document_id cannot be empty")
+        try:
+            result = self._collection.get(
+                where={"document_id": document_id},
+                include=["documents", "metadatas", "embeddings"],
+            )
+            return {
+                "document_id": document_id,
+                "ids": _optional_list(result.get("ids")),
+                "documents": _optional_list(result.get("documents")),
+                "metadatas": _optional_list(result.get("metadatas")),
+                "embeddings": _optional_list(result.get("embeddings")),
+            }
+        except Exception as exc:
+            raise VectorDatabaseError(
+                "The document index snapshot could not be created."
+            ) from exc
+
+    def restore_document(self, snapshot: dict[str, Any]) -> None:
+        """Restore an index snapshot after a coordinated operation fails."""
+        ids = snapshot.get("ids")
+        document_id = snapshot.get("document_id")
+        if not isinstance(ids, list) or not isinstance(document_id, str):
+            raise ValueError("The document index snapshot is invalid.")
+        try:
+            self._collection.delete(where={"document_id": document_id})
+            if not ids:
+                return
+            self._collection.upsert(
+                ids=ids,
+                documents=snapshot["documents"],
+                metadatas=snapshot["metadatas"],
+                embeddings=snapshot["embeddings"],
+            )
+        except (KeyError, TypeError) as exc:
+            raise ValueError("The document index snapshot is invalid.") from exc
+        except Exception as exc:
+            raise VectorDatabaseError(
+                "The document index snapshot could not be restored."
+            ) from exc
+
+    def update_document_data(self, document_id: str, document: DocumentData) -> None:
+        """Replace summary and structured fragments without touching raw OCR text."""
+        if not document_id.strip():
+            raise ValueError("document_id cannot be empty")
+        fragments = self._fragments("", document)[:2]
+        contents = [content for _, content, _source in fragments]
+        embeddings = self._embedding_generator.embed(contents)
+        if len(embeddings) != len(fragments):
+            raise VectorDatabaseError(
+                "The local embedding model returned an unexpected result count."
+            )
+        try:
+            self._collection.upsert(
+                ids=[f"{document_id}:{suffix}" for suffix, _, _ in fragments],
+                embeddings=embeddings,
+                documents=contents,
+                metadatas=[
+                    {"document_id": document_id, "source": source}
+                    for _, _, source in fragments
+                ],
+            )
+        except Exception as exc:
+            raise VectorDatabaseError(
+                "The document index could not be updated locally."
+            ) from exc
+
+    def delete_document(self, document_id: str) -> None:
+        """Delete all fragments belonging to one document."""
+        if not document_id.strip():
+            raise ValueError("document_id cannot be empty")
+        try:
+            self._collection.delete(where={"document_id": document_id})
+        except Exception as exc:
+            raise VectorDatabaseError(
+                "The document index could not be deleted locally."
+            ) from exc
+
     def query(self, question: str, *, limit: int = 5) -> list[RetrievedDocumentChunk]:
         """Retrieve nearest document fragments using a locally embedded question."""
         candidate = question.strip()
@@ -267,3 +348,8 @@ def _decode_query_result(result: Any) -> list[RetrievedDocumentChunk]:
             RetrievedDocumentChunk(document_id, content, source, float(distance))
         )
     return chunks
+
+
+def _optional_list(value: Any) -> list[Any]:
+    """Convert an optional Chroma sequence without testing array truthiness."""
+    return [] if value is None else list(value)

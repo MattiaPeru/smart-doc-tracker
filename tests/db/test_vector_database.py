@@ -22,16 +22,28 @@ class FakeEmbeddingGenerator:
 class FakeCollection:
     def __init__(self) -> None:
         self.delete_calls: list[list[str]] = []
+        self.delete_where_calls: list[dict[str, str]] = []
         self.existing_ids: list[str] = []
+        self.get_payload: dict[str, object] | None = None
         self.upsert_payload: dict[str, object] = {}
         self.query_payload: dict[str, object] = {}
         self.record_count = 3
 
     def get(self, **payload: object) -> dict[str, object]:
+        if self.get_payload is not None:
+            return self.get_payload
         return {"ids": self.existing_ids}
 
-    def delete(self, *, ids: list[str]) -> None:
-        self.delete_calls.append(ids)
+    def delete(
+        self,
+        *,
+        ids: list[str] | None = None,
+        where: dict[str, str] | None = None,
+    ) -> None:
+        if ids is not None:
+            self.delete_calls.append(ids)
+        if where is not None:
+            self.delete_where_calls.append(where)
 
     def upsert(self, **payload: object) -> None:
         self.upsert_payload = payload
@@ -137,6 +149,29 @@ class ChromaDocumentVectorIndexTests(TestCase):
         self.assertEqual(results[0].source, "raw_text")
         self.assertEqual(collection.query_payload["n_results"], 3)
         self.assertIn("query_embeddings", collection.query_payload)
+
+    def test_snapshots_deletes_and_restores_all_document_fragments(self) -> None:
+        collection = FakeCollection()
+        collection.get_payload = {
+            "ids": ["doc-1:summary"],
+            "documents": ["A vehicle insurance policy"],
+            "metadatas": [{"document_id": "doc-1", "source": "summary"}],
+            "embeddings": [[1.0, 2.0]],
+        }
+        index = ChromaDocumentVectorIndex(
+            embedding_generator=FakeEmbeddingGenerator(),
+            client_factory=lambda _host, _port: FakeClient(collection),
+        )
+
+        snapshot = index.snapshot_document("doc-1")
+        index.delete_document("doc-1")
+        index.restore_document(snapshot)
+
+        self.assertEqual(
+            collection.delete_where_calls,
+            [{"document_id": "doc-1"}, {"document_id": "doc-1"}],
+        )
+        self.assertEqual(collection.upsert_payload["ids"], ["doc-1:summary"])
 
     def test_builds_model_specific_collection_names(self) -> None:
         first = collection_name_for_embedding_model("embeddinggemma")

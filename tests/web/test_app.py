@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from datetime import UTC, date, datetime
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 from unittest import TestCase
 
@@ -10,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from smart_doc_tracker.db.database import DocumentInsertResult, StoredDocument
 from smart_doc_tracker.models.document import DocumentData
+from smart_doc_tracker.pipeline import DocumentProcessingResult
 from smart_doc_tracker.web.app import WebDependencies, create_app
 
 
@@ -61,6 +63,82 @@ class FakeRepository:
             return self.records[:1]
         return []
 
+    def insert_document(
+        self,
+        document: DocumentData,
+        *,
+        file_hash: str,
+    ) -> DocumentInsertResult:
+        record = StoredDocument(
+            id="confirmed",
+            file_hash=file_hash,
+            document=document,
+            created_at=datetime(2026, 8, 26, 12, 0, tzinfo=UTC),
+        )
+        self.records.append(record)
+        return DocumentInsertResult(record=record, inserted=True)
+
+    def upsert_document_sections(self, document_id: str, sections: Any) -> None:
+        return None
+
+    def update_document(
+        self,
+        document_id: str,
+        document: DocumentData,
+    ) -> StoredDocument | None:
+        for index, record in enumerate(self.records):
+            if record.id == document_id:
+                updated = StoredDocument(
+                    id=record.id,
+                    file_hash=record.file_hash,
+                    document=document,
+                    created_at=record.created_at,
+                )
+                self.records[index] = updated
+                return updated
+        return None
+
+    def delete_document(self, document_id: str) -> StoredDocument | None:
+        record = self.get_document_by_id(document_id)
+        if record is not None:
+            self.records.remove(record)
+        return record
+
+
+class FakeVectorIndex:
+    def __init__(self) -> None:
+        self.upserts: list[tuple[str, str, DocumentData]] = []
+        self.updates: list[tuple[str, DocumentData]] = []
+        self.deletes: list[str] = []
+
+    def upsert_document(
+        self,
+        document_id: str,
+        *,
+        raw_text: str,
+        document: DocumentData,
+    ) -> None:
+        self.upserts.append((document_id, raw_text, document))
+
+    def snapshot_document(self, document_id: str) -> dict[str, Any]:
+        return {"ids": []}
+
+    def restore_document(self, snapshot: dict[str, Any]) -> None:
+        return None
+
+    def update_document_data(
+        self,
+        document_id: str,
+        document: DocumentData,
+    ) -> None:
+        self.updates.append((document_id, document))
+
+    def delete_document(self, document_id: str) -> None:
+        self.deletes.append(document_id)
+
+    def query(self, question: str, *, limit: int = 5) -> list[Any]:
+        return []
+
 
 class WebApplicationTests(TestCase):
     def setUp(self) -> None:
@@ -71,19 +149,30 @@ class WebApplicationTests(TestCase):
             _record("none", expiry_date=None),
         ]
         self.repository = FakeRepository(self.records)
+        self.vector_index = FakeVectorIndex()
+        self.temporary_directory = TemporaryDirectory()
         self.processed_paths: list[Path] = []
 
-        def process(path: Path, language: str, reporter: Any) -> DocumentInsertResult:
+        def process(
+            path: Path,
+            language: str,
+            reporter: Any,
+        ) -> DocumentProcessingResult:
             self.assertTrue(path.exists())
             self.assertEqual(language, "ita")
             self.processed_paths.append(path)
-            return DocumentInsertResult(record=self.records[0], inserted=True)
+            return DocumentProcessingResult(
+                raw_text="Private local text",
+                document=self.records[0].document,
+            )
 
         app = create_app(
             WebDependencies(
                 repository_factory=lambda: self.repository,
                 upload_processor=process,
                 today_provider=lambda: date(2026, 8, 26),
+                vector_index=self.vector_index,
+                processed_path=Path(self.temporary_directory.name) / "processed",
             )
         )
         self.client_context = TestClient(app)
@@ -91,6 +180,7 @@ class WebApplicationTests(TestCase):
 
     def tearDown(self) -> None:
         self.client_context.__exit__(None, None, None)
+        self.temporary_directory.cleanup()
 
     def test_renders_dashboard_and_classifies_expirations(self) -> None:
         dashboard = self.client.get("/")
@@ -127,7 +217,7 @@ class WebApplicationTests(TestCase):
         )
         self.assertEqual(self.client.get("/api/documents/missing").status_code, 404)
 
-    def test_uploads_to_a_job_and_removes_the_temporary_file(self) -> None:
+    def test_upload_waits_for_confirmation_then_stores_and_archives(self) -> None:
         response = self.client.post(
             "/api/uploads",
             files={"file": ("policy.png", b"local fixture", "image/png")},
@@ -139,13 +229,46 @@ class WebApplicationTests(TestCase):
         job: dict[str, Any] = {}
         for _ in range(100):
             job = self.client.get(f"/api/jobs/{job_id}").json()
-            if job["status"] in {"completed", "failed"}:
+            if job["status"] in {"awaiting_confirmation", "failed"}:
                 break
             time.sleep(0.01)
-        self.assertEqual(job["status"], "completed")
-        self.assertEqual(job["document_id"], "expired")
+        self.assertEqual(job["status"], "awaiting_confirmation")
+        self.assertIsNotNone(job["pending_id"])
         self.assertTrue(self.processed_paths)
+        self.assertTrue(self.processed_paths[0].exists())
+        pending = self.client.get("/api/pending-documents").json()
+        self.assertEqual(len(pending), 1)
+
+        payload = pending[0]["document"]
+        payload["summary"] = "User-confirmed summary"
+        payload["extracted_data"]["contract_number"] = "C-9"
+        confirmed = self.client.post(
+            f"/api/pending-documents/{job['pending_id']}/confirm",
+            json=payload,
+        )
+
+        self.assertEqual(confirmed.status_code, 200)
+        self.assertEqual(confirmed.json()["summary"], "User-confirmed summary")
+        self.assertEqual(len(self.client.get("/api/pending-documents").json()), 0)
         self.assertFalse(self.processed_paths[0].exists())
+        self.assertTrue(
+            (Path(self.temporary_directory.name) / "processed" / "policy.png").exists()
+        )
+        self.assertEqual(self.vector_index.upserts[0][0], "confirmed")
+
+    def test_updates_and_deletes_a_document_in_both_stores(self) -> None:
+        payload = self.records[1].document.model_dump(mode="json")
+        payload["summary"] = "Updated summary"
+
+        updated = self.client.put("/api/documents/soon", json=payload)
+        deleted = self.client.delete("/api/documents/soon")
+
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(updated.json()["summary"], "Updated summary")
+        self.assertEqual(self.vector_index.updates[0][0], "soon")
+        self.assertEqual(deleted.status_code, 204)
+        self.assertEqual(self.vector_index.deletes, ["soon"])
+        self.assertIsNone(self.repository.get_document_by_id("soon"))
 
     def test_rejects_unsupported_or_empty_uploads(self) -> None:
         unsupported = self.client.post(

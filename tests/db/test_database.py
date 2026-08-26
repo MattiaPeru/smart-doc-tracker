@@ -68,6 +68,14 @@ class FakeCollection:
             deepcopy(item) for item in self.documents if _matches(item, filter)
         )
 
+    def delete_one(self, filter: dict[str, Any]) -> None:
+        self.documents = [
+            item for item in self.documents if not _matches(item, filter)
+        ]
+
+    def delete_many(self, filter: dict[str, Any]) -> None:
+        self.delete_one(filter)
+
 
 def _matches(document: dict[str, Any], query: dict[str, Any]) -> bool:
     for key, expected in query.items():
@@ -136,6 +144,24 @@ class MongoDocumentRepositoryTests(TestCase):
         self.assertEqual(found, inserted.record)
         self.assertEqual(self.repository.get_all_documents(), [inserted.record])
         self.assertIsNone(self.repository.get_document_by_id("not-an-object-id"))
+
+    def test_deletes_document_and_its_structured_sections(self) -> None:
+        inserted = self.repository.insert_document(
+            _document(), file_hash=self.file_hash, created_at=self.created_at
+        )
+        self.sections_collection.documents.append(
+            {
+                "_id": ObjectId(),
+                "document_id": ObjectId(inserted.record.id),
+                "chunk_number": 1,
+            }
+        )
+
+        deleted = self.repository.delete_document(inserted.record.id)
+
+        self.assertEqual(deleted, inserted.record)
+        self.assertEqual(self.collection.documents, [])
+        self.assertEqual(self.sections_collection.documents, [])
 
     def test_updates_validated_fields_and_preserves_record_metadata(self) -> None:
         inserted = self.repository.insert_document(

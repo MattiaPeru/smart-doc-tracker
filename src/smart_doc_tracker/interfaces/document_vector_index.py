@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Any, Protocol
 
 from ..models.document import DocumentData
 from ..models.rag import RetrievedDocumentChunk
@@ -23,4 +23,20 @@ class DocumentVectorIndex(Protocol):
 
     def query(self, question: str, *, limit: int = 5) -> list[RetrievedDocumentChunk]:
         """Return the fragments most semantically relevant to a question."""
+        ...
+
+    def snapshot_document(self, document_id: str) -> dict[str, Any]:
+        """Return an opaque restorable snapshot for one document."""
+        ...
+
+    def restore_document(self, snapshot: dict[str, Any]) -> None:
+        """Restore a previously captured document snapshot."""
+        ...
+
+    def update_document_data(self, document_id: str, document: DocumentData) -> None:
+        """Update structured fragments while preserving raw-text fragments."""
+        ...
+
+    def delete_document(self, document_id: str) -> None:
+        """Delete every vector fragment belonging to one document."""
         ...

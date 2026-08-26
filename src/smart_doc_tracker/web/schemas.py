@@ -8,7 +8,9 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 from ..db.database import StoredDocument
+from ..models.document import DocumentData
 from .jobs import UploadJob
+from .pending import PendingDocument
 
 
 class DocumentResponse(BaseModel):
@@ -67,6 +69,7 @@ class UploadJobResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     document_id: str | None
+    pending_id: str | None
     inserted: bool | None
     error: str | None
 
@@ -74,3 +77,24 @@ class UploadJobResponse(BaseModel):
     def from_job(cls, job: UploadJob) -> UploadJobResponse:
         """Convert an immutable job snapshot to JSON output."""
         return cls.model_validate(job)
+
+
+class PendingDocumentResponse(BaseModel):
+    """Editable extracted data for one upload awaiting confirmation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    file_name: str
+    document: DocumentData
+    created_at: datetime
+
+    @classmethod
+    def from_pending(cls, pending: PendingDocument) -> PendingDocumentResponse:
+        """Create a response without exposing raw OCR text or temporary paths."""
+        return cls(
+            id=pending.id,
+            file_name=pending.file_name,
+            document=pending.document,
+            created_at=pending.created_at,
+        )

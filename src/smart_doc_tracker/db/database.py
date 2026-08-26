@@ -253,6 +253,22 @@ class MongoDocumentRepository:
             raise DatabaseError("The document could not be updated locally.") from exc
         return _to_stored_document(stored) if stored is not None else None
 
+    def delete_document(self, document_id: str) -> StoredDocument | None:
+        """Delete one document and its structured sections, returning its snapshot."""
+        if not ObjectId.is_valid(document_id):
+            return None
+        identifier = ObjectId(document_id)
+        try:
+            stored = self._collection.find_one({"_id": identifier})
+            if stored is None:
+                return None
+            if self._sections_collection is not None:
+                self._sections_collection.delete_many({"document_id": identifier})
+            self._collection.delete_one({"_id": identifier})
+        except PyMongoError as exc:
+            raise DatabaseError("The document could not be deleted locally.") from exc
+        return _to_stored_document(stored)
+
     def get_expiring_documents(
         self, days_threshold: int, *, today: date | None = None
     ) -> list[StoredDocument]:

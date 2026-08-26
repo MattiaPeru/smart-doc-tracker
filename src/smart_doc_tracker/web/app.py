@@ -26,13 +26,13 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from ..core.file_hash import FileHashingError, calculate_file_sha256
 from ..core.ocr import SUPPORTED_IMAGE_EXTENSIONS, TesseractOCR
 from ..core.parser import DocumentParser, LongDocumentParser
 from ..core.pdf import LocalPDFTextExtractor
 from ..db.database import (
     DatabaseConfigurationError,
     DatabaseError,
-    DocumentInsertResult,
     MongoDocumentRepository,
 )
 from ..db.vector_database import (
@@ -41,9 +41,13 @@ from ..db.vector_database import (
 )
 from ..infrastructure.ollama import OllamaClient, OllamaEmbeddingClient
 from ..interfaces.document_repository import DocumentRepository
-from ..pipeline import DocumentProcessingPipeline
+from ..interfaces.document_vector_index import DocumentVectorIndex
+from ..models.document import DocumentData
+from ..mutation_pipeline import CoordinatedMutationError, DocumentMutationPipeline
+from ..pipeline import DocumentProcessingPipeline, DocumentProcessingResult
 from .jobs import ProgressReporter, UploadJobService, UploadProcessor
-from .schemas import DocumentResponse, UploadJobResponse
+from .pending import PendingDocumentService
+from .schemas import DocumentResponse, PendingDocumentResponse, UploadJobResponse
 
 RepositoryFactory = Callable[[], DocumentRepository]
 _WEB_ROOT = Path(__file__).parent
@@ -60,50 +64,62 @@ class WebDependencies:
     repository_factory: RepositoryFactory
     upload_processor: UploadProcessor
     today_provider: Callable[[], date] = date.today
+    vector_index: DocumentVectorIndex | None = None
+    processed_path: Path = Path("data/processed")
 
 
 def default_web_dependencies() -> WebDependencies:
     """Compose the production dashboard from loopback-only adapters."""
     repository_factory = MongoDocumentRepository.connect
 
+    vector_index = ChromaDocumentVectorIndex(
+        embedding_generator=OllamaEmbeddingClient(model="embeddinggemma"),
+        collection_name=collection_name_for_embedding_model("embeddinggemma"),
+    )
+
     def process_upload(
         path: Path,
         language: str,
         progress_reporter: ProgressReporter,
-    ) -> DocumentInsertResult:
-        """Process and store one upload through local production adapters."""
+    ) -> DocumentProcessingResult:
+        """Extract and parse one upload without persisting it."""
         generator = OllamaClient()
-        embedding_model = "embeddinggemma"
-        result = DocumentProcessingPipeline(
+        return DocumentProcessingPipeline(
             ocr=TesseractOCR(),
             parser=DocumentParser(generator),
             pdf_extractor=LocalPDFTextExtractor(),
             long_document_parser=LongDocumentParser(generator),
-            repository_factory=repository_factory,
-            vector_index=ChromaDocumentVectorIndex(
-                embedding_generator=OllamaEmbeddingClient(model=embedding_model),
-                collection_name=collection_name_for_embedding_model(embedding_model),
-            ),
             language=language,
             progress_reporter=progress_reporter,
-        ).process(path, structured=True, store=True)
-        if result.insert_result is None:
-            raise RuntimeError("Stored processing returned no insertion result")
-        return result.insert_result
+        ).process(path, structured=True, store=False)
 
-    return WebDependencies(repository_factory, process_upload)
+    return WebDependencies(
+        repository_factory,
+        process_upload,
+        vector_index=vector_index,
+    )
 
 
 def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
     """Create a testable local dashboard with injected application services."""
     resolved = dependencies or default_web_dependencies()
-    jobs = UploadJobService(resolved.upload_processor)
+    pending_documents = PendingDocumentService(resolved.processed_path)
+    jobs = UploadJobService(resolved.upload_processor, pending_documents)
+    mutations = (
+        DocumentMutationPipeline(
+            resolved.repository_factory,
+            resolved.vector_index,
+        )
+        if resolved.vector_index is not None
+        else None
+    )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         """Close the bounded worker after all accepted uploads finish."""
         yield
         jobs.close()
+        pending_documents.close()
 
     app = FastAPI(
         title="Smart Doc Tracker",
@@ -190,6 +206,90 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
             alert_days=alert_days,
         )
 
+    @app.put("/api/documents/{document_id}", response_model=DocumentResponse)
+    def update_document(
+        document_id: str,
+        document: DocumentData,
+    ) -> DocumentResponse:
+        """Update one document consistently in MongoDB and ChromaDB."""
+        service = _require_mutation_service(mutations)
+        try:
+            updated = service.update(document_id, document)
+        except CoordinatedMutationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Document not found.")
+        return DocumentResponse.from_record(
+            updated,
+            today=resolved.today_provider(),
+            alert_days=30,
+        )
+
+    @app.delete("/api/documents/{document_id}", status_code=204)
+    def delete_document(document_id: str) -> None:
+        """Delete one document consistently from MongoDB and ChromaDB."""
+        service = _require_mutation_service(mutations)
+        try:
+            deleted = service.delete(document_id)
+        except CoordinatedMutationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        if deleted is None:
+            raise HTTPException(status_code=404, detail="Document not found.")
+
+    @app.get("/api/pending-documents", response_model=list[PendingDocumentResponse])
+    def list_pending_documents() -> list[PendingDocumentResponse]:
+        """List uploads that have not yet been explicitly confirmed."""
+        return [
+            PendingDocumentResponse.from_pending(item)
+            for item in pending_documents.list()
+        ]
+
+    @app.get(
+        "/api/pending-documents/{pending_id}",
+        response_model=PendingDocumentResponse,
+    )
+    def get_pending_document(pending_id: str) -> PendingDocumentResponse:
+        """Return one editable pending upload."""
+        pending = pending_documents.get(pending_id)
+        if pending is None:
+            raise HTTPException(status_code=404, detail="Pending document not found.")
+        return PendingDocumentResponse.from_pending(pending)
+
+    @app.post(
+        "/api/pending-documents/{pending_id}/confirm",
+        response_model=DocumentResponse,
+    )
+    def confirm_pending_document(
+        pending_id: str,
+        document: DocumentData,
+    ) -> DocumentResponse:
+        """Validate user edits before persistence, indexing, and archiving."""
+        pending = pending_documents.get(pending_id)
+        if pending is None:
+            raise HTTPException(status_code=404, detail="Pending document not found.")
+        service = _require_mutation_service(mutations)
+        try:
+            result = service.confirm(
+                document,
+                file_hash=calculate_file_sha256(pending.source_path),
+                raw_text=pending.raw_text,
+                sections=pending.sections,
+                finalize=lambda: pending_documents.archive(pending.id),
+            )
+        except (CoordinatedMutationError, FileHashingError) as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return DocumentResponse.from_record(
+            result.record,
+            today=resolved.today_provider(),
+            alert_days=30,
+        )
+
+    @app.delete("/api/pending-documents/{pending_id}", status_code=204)
+    def reject_pending_document(pending_id: str) -> None:
+        """Reject and securely discard one staged upload."""
+        if not pending_documents.reject(pending_id):
+            raise HTTPException(status_code=404, detail="Pending document not found.")
+
     @app.post(
         "/api/uploads",
         response_model=UploadJobResponse,
@@ -246,6 +346,18 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
         return UploadJobResponse.from_job(job)
 
     return app
+
+
+def _require_mutation_service(
+    service: DocumentMutationPipeline | None,
+) -> DocumentMutationPipeline:
+    """Return configured mutation coordination or a safe service error."""
+    if service is None:
+        raise HTTPException(
+            status_code=503,
+            detail="The local vector database is unavailable.",
+        )
+    return service
 
 
 def _parse_query_value(value: str) -> Any:

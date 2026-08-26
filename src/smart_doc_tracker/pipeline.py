@@ -104,6 +104,7 @@ class DocumentProcessingResult:
 
     raw_text: str
     document: DocumentData | None = None
+    sections: tuple[StructuredDocumentSection, ...] = ()
     insert_result: DocumentInsertResult | None = None
 
 
@@ -168,7 +169,11 @@ class DocumentProcessingPipeline:
         self._report(DocumentProcessingStage.PARSING_COMPLETED)
 
         if not store:
-            return DocumentProcessingResult(raw_text=raw_text, document=document)
+            return DocumentProcessingResult(
+                raw_text=raw_text,
+                document=document,
+                sections=tuple(sections),
+            )
 
         self._report(DocumentProcessingStage.STORAGE_STARTED)
         if self.repository is not None:
@@ -198,6 +203,7 @@ class DocumentProcessingPipeline:
         return DocumentProcessingResult(
             raw_text=raw_text,
             document=document,
+            sections=tuple(sections),
             insert_result=insert_result,
         )
 

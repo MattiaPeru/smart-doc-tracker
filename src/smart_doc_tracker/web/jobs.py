@@ -11,8 +11,8 @@ from pathlib import Path
 from threading import Lock
 from uuid import uuid4
 
-from ..db.database import DocumentInsertResult
-from ..pipeline import DocumentProcessingStage
+from ..pipeline import DocumentProcessingResult, DocumentProcessingStage
+from .pending import PendingDocumentService
 
 
 class UploadJobStatus(StrEnum):
@@ -21,9 +21,7 @@ class UploadJobStatus(StrEnum):
     QUEUED = "queued"
     EXTRACTING = "extracting"
     PARSING = "parsing"
-    STORING = "storing"
-    INDEXING = "indexing"
-    COMPLETED = "completed"
+    AWAITING_CONFIRMATION = "awaiting_confirmation"
     FAILED = "failed"
 
 
@@ -37,20 +35,26 @@ class UploadJob:
     created_at: datetime
     updated_at: datetime
     document_id: str | None = None
+    pending_id: str | None = None
     inserted: bool | None = None
     error: str | None = None
 
 
 ProgressReporter = Callable[[DocumentProcessingStage], None]
-UploadProcessor = Callable[[Path, str, ProgressReporter], DocumentInsertResult]
+UploadProcessor = Callable[[Path, str, ProgressReporter], DocumentProcessingResult]
 
 
 class UploadJobService:
     """Execute uploaded documents locally with one bounded worker."""
 
-    def __init__(self, processor: UploadProcessor) -> None:
+    def __init__(
+        self,
+        processor: UploadProcessor,
+        pending_documents: PendingDocumentService,
+    ) -> None:
         """Configure an injected processor without starting external services."""
         self._processor = processor
+        self._pending_documents = pending_documents
         self._jobs: dict[str, UploadJob] = {}
         self._lock = Lock()
         self._executor = ThreadPoolExecutor(
@@ -71,7 +75,7 @@ class UploadJobService:
         with self._lock:
             self._jobs[job.id] = job
         try:
-            self._executor.submit(self._run, job.id, path, language)
+            self._executor.submit(self._run, job.id, path, file_name, language)
         except RuntimeError:
             path.unlink(missing_ok=True)
             raise
@@ -86,8 +90,15 @@ class UploadJobService:
         """Finish accepted work and release the worker thread."""
         self._executor.shutdown(wait=True, cancel_futures=False)
 
-    def _run(self, job_id: str, path: Path, language: str) -> None:
+    def _run(
+        self,
+        job_id: str,
+        path: Path,
+        file_name: str,
+        language: str,
+    ) -> None:
         """Process one temporary file and remove it on every exit path."""
+        owns_path = True
         try:
             self._set_status(job_id, UploadJobStatus.EXTRACTING)
             result = self._processor(
@@ -95,11 +106,20 @@ class UploadJobService:
                 language,
                 lambda stage: self._report_stage(job_id, stage),
             )
+            if result.document is None:
+                raise RuntimeError("Structured processing returned no document")
+            pending = self._pending_documents.add(
+                path,
+                file_name=file_name,
+                raw_text=result.raw_text,
+                document=result.document,
+                sections=result.sections,
+            )
+            owns_path = False
             self._update(
                 job_id,
-                status=UploadJobStatus.COMPLETED,
-                document_id=result.record.id,
-                inserted=result.inserted,
+                status=UploadJobStatus.AWAITING_CONFIRMATION,
+                pending_id=pending.id,
             )
         except Exception:
             self._update(
@@ -108,15 +128,14 @@ class UploadJobService:
                 error="The document could not be processed locally.",
             )
         finally:
-            path.unlink(missing_ok=True)
+            if owns_path:
+                path.unlink(missing_ok=True)
 
     def _report_stage(self, job_id: str, stage: DocumentProcessingStage) -> None:
         """Map pipeline progress onto public job states."""
         status_by_stage = {
             DocumentProcessingStage.EXTRACTION_STARTED: UploadJobStatus.EXTRACTING,
             DocumentProcessingStage.PARSING_STARTED: UploadJobStatus.PARSING,
-            DocumentProcessingStage.STORAGE_STARTED: UploadJobStatus.STORING,
-            DocumentProcessingStage.INDEXING_STARTED: UploadJobStatus.INDEXING,
         }
         status = status_by_stage.get(stage)
         if status is not None:
@@ -132,6 +151,7 @@ class UploadJobService:
         *,
         status: UploadJobStatus,
         document_id: str | None = None,
+        pending_id: str | None = None,
         inserted: bool | None = None,
         error: str | None = None,
     ) -> None:
@@ -143,6 +163,7 @@ class UploadJobService:
                 status=status,
                 updated_at=datetime.now(UTC),
                 document_id=document_id,
+                pending_id=pending_id,
                 inserted=inserted,
                 error=error,
             )
