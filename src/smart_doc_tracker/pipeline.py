@@ -85,6 +85,19 @@ ExtractedTextReporter = Callable[[Path, str], None]
 
 
 @dataclass(frozen=True, slots=True)
+class InboxProcessingFailure:
+    """Safe diagnostic details for one file that could not be processed."""
+
+    file_name: str
+    phase: str
+    error_type: str
+    reason: str
+
+
+InboxFailureReporter = Callable[[InboxProcessingFailure], None]
+
+
+@dataclass(frozen=True, slots=True)
 class DocumentProcessingResult:
     """Data produced by one local document-processing workflow."""
 
@@ -216,6 +229,7 @@ class InboxProcessingPipeline:
     long_document_parser: LongStructuredDocumentParser | None = None
     vector_index: DocumentVectorIndex | None = None
     extracted_text_reporter: ExtractedTextReporter | None = None
+    failure_reporter: InboxFailureReporter | None = None
 
     def process(self) -> InboxProcessingResult:
         """Process every supported inbox file, isolating expected per-file failures."""
@@ -235,13 +249,21 @@ class InboxProcessingPipeline:
             extracted_text_reporter=self.extracted_text_reporter,
         )
         for source_path in scan.files:
+            current_stage = DocumentProcessingStage.EXTRACTION_STARTED
+
+            def track_stage(stage: DocumentProcessingStage) -> None:
+                """Remember the latest phase reached for failure diagnostics."""
+                nonlocal current_stage
+                current_stage = stage
+
             try:
+                current_stage = DocumentProcessingStage.EXTRACTION_STARTED
+                document_pipeline.progress_reporter = track_stage
                 processing_result = document_pipeline.process(
                     source_path,
                     structured=True,
                     store=True,
                 )
-                self.folders.archive(source_path)
             except (
                 OCRInputError,
                 OCRDependencyError,
@@ -257,8 +279,20 @@ class InboxProcessingPipeline:
                 DatabaseError,
                 VectorDatabaseError,
                 InboxError,
-            ):
+            ) as exc:
                 failed += 1
+                self._report_failure(
+                    source_path,
+                    self._phase_for_stage(current_stage),
+                    exc,
+                )
+                continue
+
+            try:
+                self.folders.archive(source_path)
+            except InboxError as exc:
+                failed += 1
+                self._report_failure(source_path, "archiving", exc)
                 continue
 
             processed += 1
@@ -277,6 +311,40 @@ class InboxProcessingPipeline:
             failed=failed,
             skipped=scan.skipped,
         )
+
+    def _report_failure(
+        self,
+        source_path: Path,
+        phase: str,
+        exc: Exception,
+    ) -> None:
+        """Report a per-file failure without exposing extracted document contents."""
+        if self.failure_reporter is None:
+            return
+        reason = str(exc).strip() or "No additional error details were provided."
+        self.failure_reporter(
+            InboxProcessingFailure(
+                file_name=source_path.name,
+                phase=phase,
+                error_type=type(exc).__name__,
+                reason=reason,
+            )
+        )
+
+    @staticmethod
+    def _phase_for_stage(stage: DocumentProcessingStage) -> str:
+        """Convert the last observed document stage into a user-facing phase."""
+        if stage in (
+            DocumentProcessingStage.EXTRACTION_STARTED,
+            DocumentProcessingStage.EXTRACTION_COMPLETED,
+        ):
+            return "text extraction (OCR/PDF)"
+        if stage in (
+            DocumentProcessingStage.PARSING_STARTED,
+            DocumentProcessingStage.PARSING_COMPLETED,
+        ):
+            return "document parsing"
+        return "database/vector storage"
 
 
 _RAG_SYSTEM_PROMPT = """Answer questions only from the provided local document context.

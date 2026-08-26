@@ -10,15 +10,13 @@ param(
     [int]$MongoTimeoutSeconds = 60,
 
     [ValidatePattern("^[A-Za-z][A-Za-z0-9_+.-]*$")]
-    [string]$OcrLanguage = "eng"
+    [string]$OcrLanguage = "eng",
+
+    [switch]$WaitForInput
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
-
-$projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$pythonPath = Join-Path $projectRoot ".venv\Scripts\python.exe"
-$composeFile = Join-Path $projectRoot "docker-compose.yml"
 
 function Resolve-DockerCli {
     $dockerCommand = Get-Command "docker.exe" -ErrorAction SilentlyContinue
@@ -130,18 +128,44 @@ function Start-StorageServices {
     throw "The local storage services did not become ready before the local timeout."
 }
 
-if (-not (Test-Path -LiteralPath $pythonPath -PathType Leaf)) {
-    throw "The project virtual environment was not found. Create .venv and install requirements first."
+$exitCode = 0
+try {
+    $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+    $pythonPath = Join-Path $projectRoot ".venv\Scripts\python.exe"
+    $composeFile = Join-Path $projectRoot "docker-compose.yml"
+
+    if (-not (Test-Path -LiteralPath $pythonPath -PathType Leaf)) {
+        throw "The project virtual environment was not found. Create .venv and install requirements first."
+    }
+    if (-not (Test-Path -LiteralPath $composeFile -PathType Leaf)) {
+        throw "The local Docker Compose configuration was not found."
+    }
+
+    $dockerCli = Resolve-DockerCli
+    Start-DockerDaemon -DockerCli $dockerCli -TimeoutSeconds $DockerTimeoutSeconds
+    Start-StorageServices -DockerCli $dockerCli -TimeoutSeconds $MongoTimeoutSeconds
+
+    & $pythonPath -m smart_doc_tracker `
+        --days-threshold $DaysThreshold `
+        --language $OcrLanguage
+    $pipelineExitCode = $LASTEXITCODE
+    if ($pipelineExitCode -ne 0) {
+        throw "The document pipeline exited with code $pipelineExitCode. Review the error output above."
+    }
+
+    Write-Host "Smart Doc Tracker completed successfully." -ForegroundColor Green
 }
-if (-not (Test-Path -LiteralPath $composeFile -PathType Leaf)) {
-    throw "The local Docker Compose configuration was not found."
+catch {
+    $exitCode = 1
+    Write-Host ""
+    Write-Host "Smart Doc Tracker failed." -ForegroundColor Red
+    Write-Host ("Reason: {0}" -f $_.Exception.Message) -ForegroundColor Red
+}
+finally {
+    if ($WaitForInput) {
+        Write-Host ""
+        [void](Read-Host "Press Enter to close")
+    }
 }
 
-$dockerCli = Resolve-DockerCli
-Start-DockerDaemon -DockerCli $dockerCli -TimeoutSeconds $DockerTimeoutSeconds
-Start-StorageServices -DockerCli $dockerCli -TimeoutSeconds $MongoTimeoutSeconds
-
-& $pythonPath -m smart_doc_tracker `
-    --days-threshold $DaysThreshold `
-    --language $OcrLanguage
-exit $LASTEXITCODE
+exit $exitCode

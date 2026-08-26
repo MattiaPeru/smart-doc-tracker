@@ -14,7 +14,7 @@ from smart_doc_tracker.models.document import (
     ParsedLongDocument,
     StructuredDocumentSection,
 )
-from smart_doc_tracker.pipeline import InboxProcessingPipeline
+from smart_doc_tracker.pipeline import InboxProcessingFailure, InboxProcessingPipeline
 
 
 class FakeOCR:
@@ -150,12 +150,14 @@ class InboxProcessingPipelineTests(TestCase):
             (inbox / "broken.png").write_bytes(b"broken")
             (inbox / "valid.png").write_bytes(b"valid")
             writer = FakeWriter()
+            failures: list[InboxProcessingFailure] = []
 
             result = InboxProcessingPipeline(
                 ocr=FakeOCR(fail_on=b"broken"),
                 parser=FakeParser(_document()),
                 repository=writer,
                 folders=LocalDocumentFolders(inbox, processed),
+                failure_reporter=failures.append,
             ).process()
 
             self.assertEqual(result.processed, 1)
@@ -163,6 +165,14 @@ class InboxProcessingPipelineTests(TestCase):
             self.assertTrue((inbox / "broken.png").is_file())
             self.assertTrue((processed / "valid.png").is_file())
             self.assertEqual(len(writer.calls), 1)
+            self.assertEqual(len(failures), 1)
+            self.assertEqual(failures[0].file_name, "broken.png")
+            self.assertEqual(failures[0].phase, "text extraction (OCR/PDF)")
+            self.assertEqual(failures[0].error_type, "OCRProcessingError")
+            self.assertEqual(
+                failures[0].reason,
+                "The image could not be processed.",
+            )
 
     def test_processes_pdf_and_persists_page_aware_sections(self) -> None:
         with TemporaryDirectory() as directory:

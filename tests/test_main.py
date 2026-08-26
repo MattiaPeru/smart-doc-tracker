@@ -627,6 +627,7 @@ class MainTests(TestCase):
             inbox.mkdir()
             failed_file = inbox / "unreadable.png"
             failed_file.write_bytes(b"invalid image")
+            stderr = StringIO()
 
             exit_code = run(
                 ["--days-threshold", "30"],
@@ -639,10 +640,17 @@ class MainTests(TestCase):
                     root / "processed",
                 ),
                 stdout=StringIO(),
-                stderr=StringIO(),
+                stderr=stderr,
             )
 
             self.assertTrue(failed_file.is_file())
+            error_output = stderr.getvalue()
+            self.assertIn("[ERROR] File 'unreadable.png'", error_output)
+            self.assertIn("failed during text extraction (OCR/PDF)", error_output)
+            self.assertIn(
+                "OCRInputError: The image could not be processed.",
+                error_output,
+            )
 
         self.assertEqual(exit_code, 1)
         self.assertEqual(repository.expiration_calls[0][0], 30)

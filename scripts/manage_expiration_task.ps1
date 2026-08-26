@@ -47,7 +47,7 @@ $parsedTime = [DateTime]::ParseExact(
 )
 $dailyStart = [DateTime]::Today.Add($parsedTime.TimeOfDay)
 $taskArguments = `
-    '-NoProfile -ExecutionPolicy Bypass -File "{0}" -DaysThreshold {1} -OcrLanguage "{2}"' -f `
+    '-NoProfile -WindowStyle Normal -ExecutionPolicy Bypass -File "{0}" -DaysThreshold {1} -OcrLanguage "{2}" -WaitForInput' -f `
     $runnerScript, $DaysThreshold, $OcrLanguage
 
 $taskAction = New-ScheduledTaskAction `
@@ -60,7 +60,7 @@ $settings = New-ScheduledTaskSettingsSet `
     -WakeToRun `
     -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries `
-    -ExecutionTimeLimit ([TimeSpan]::FromMinutes(10))
+    -ExecutionTimeLimit ([TimeSpan]::Zero)
 $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 $principal = New-ScheduledTaskPrincipal `
     -UserId $currentUser `

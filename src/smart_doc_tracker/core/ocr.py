@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import AbstractContextManager
 from pathlib import Path
+from typing import cast
 
 from ..interfaces.image_loader import ImageLoader
 from ..interfaces.text_reader import TextReader
@@ -25,6 +27,9 @@ class OCRProcessingError(RuntimeError):
     """Raised when a local image cannot be decoded or processed."""
 
 
+ImagePreprocessor = Callable[[object], object]
+
+
 class TesseractOCR:
     """Extract raw text from supported local image files."""
 
@@ -32,10 +37,12 @@ class TesseractOCR:
         self,
         image_loader: ImageLoader | None = None,
         text_reader: TextReader | None = None,
+        image_preprocessor: ImagePreprocessor | None = None,
     ) -> None:
         """Configure injectable local image loading and OCR operations."""
         self._image_loader = image_loader or _open_image
         self._text_reader = text_reader or _read_with_tesseract
+        self._image_preprocessor = image_preprocessor or _prepare_ocr_fallback
 
     def extract_text(self, image_path: str | Path, *, language: str = "eng") -> str:
         """Return raw OCR text without persisting or transmitting image contents."""
@@ -44,8 +51,22 @@ class TesseractOCR:
 
         try:
             with self._image_loader(path) as image:
-                return self._text_reader(image, lang=language)
+                raw_text = self._text_reader(image, lang=language)
+                if raw_text.strip():
+                    return raw_text
+
+                prepared_image = self._image_preprocessor(image)
+                fallback_text = self._text_reader(prepared_image, lang=language)
+                if fallback_text.strip():
+                    return fallback_text
+                raise OCRProcessingError(
+                    "Tesseract returned no text from either the original or the "
+                    "enhanced image. Ensure the document is in focus, sufficiently "
+                    "large, and evenly lit."
+                )
         except OCRDependencyError:
+            raise
+        except OCRProcessingError:
             raise
         except (OSError, ValueError) as exc:
             raise OCRProcessingError("The image could not be processed.") from exc
@@ -69,6 +90,18 @@ def _open_image(path: Path) -> AbstractContextManager[object]:
         raise OCRDependencyError("Pillow is required for local image loading.") from exc
 
     return Image.open(path)
+
+
+def _prepare_ocr_fallback(image: object) -> object:
+    """Create an in-memory grayscale, contrast-enhanced OCR fallback image."""
+    try:
+        from PIL import Image, ImageOps
+    except ImportError as exc:
+        raise OCRDependencyError("Pillow is required for OCR preprocessing.") from exc
+
+    oriented_image = ImageOps.exif_transpose(cast(Image.Image, image))
+    grayscale_image = ImageOps.grayscale(oriented_image)
+    return ImageOps.autocontrast(grayscale_image)
 
 
 def _read_with_tesseract(image: object, *, lang: str) -> str:

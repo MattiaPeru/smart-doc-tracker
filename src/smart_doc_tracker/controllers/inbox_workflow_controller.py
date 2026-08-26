@@ -23,6 +23,8 @@ from ..notifier.desktop import DesktopNotificationError, PlyerDesktopNotifier
 from ..pipeline import (
     ExpirationTrackingPipeline,
     ExtractedTextReporter,
+    InboxFailureReporter,
+    InboxProcessingFailure,
     InboxProcessingPipeline,
     InboxProcessingResult,
 )
@@ -34,6 +36,19 @@ class InboxWorkflowController:
     """Coordinate multi-document inbox workflows and their CLI output."""
 
     dependencies: CliDependencies
+
+    def _failure_reporter(self) -> InboxFailureReporter:
+        """Build a terminal reporter for safe per-file failure diagnostics."""
+        def report(failure: InboxProcessingFailure) -> None:
+            """Print one safe and actionable per-file error."""
+            print(
+                f"[ERROR] File '{failure.file_name}' failed during "
+                f"{failure.phase}: {failure.error_type}: {failure.reason}",
+                file=self.dependencies.stderr,
+                flush=True,
+            )
+
+        return report
 
     def _extracted_text_reporter(
         self, args: argparse.Namespace
@@ -99,6 +114,7 @@ class InboxWorkflowController:
                     long_document_parser=long_parser,
                     vector_index=vector_index,
                     extracted_text_reporter=self._extracted_text_reporter(args),
+                    failure_reporter=self._failure_reporter(),
                 ).process()
         except (
             InboxError,
@@ -177,6 +193,7 @@ class InboxWorkflowController:
                         long_document_parser=long_parser,
                         vector_index=vector_index,
                         extracted_text_reporter=self._extracted_text_reporter(args),
+                        failure_reporter=self._failure_reporter(),
                     ).process()
                     print(
                         "[1/2] Inbox processing completed: "

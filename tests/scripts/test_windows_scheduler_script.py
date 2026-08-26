@@ -19,6 +19,8 @@ class WindowsSchedulerScriptTests(TestCase):
         self.assertIn("-ExecutionPolicy Bypass -File", script)
         self.assertIn("-DaysThreshold", script)
         self.assertIn("-OcrLanguage", script)
+        self.assertIn("-WaitForInput", script)
+        self.assertIn("-WindowStyle Normal", script)
         self.assertIn("-WorkingDirectory $projectRoot", script)
 
     def test_task_recovers_missed_runs_and_supports_uninstall(self) -> None:
@@ -41,6 +43,15 @@ class WindowsSchedulerScriptTests(TestCase):
         self.assertIn("db.adminCommand('ping')", script)
         self.assertIn("/dev/tcp/127.0.0.1/8000", script)
         self.assertIn("--language $OcrLanguage", script)
+
+    def test_runner_reports_failures_and_waits_only_when_requested(self) -> None:
+        script = RUNNER_SCRIPT_PATH.read_text(encoding="utf-8")
+
+        self.assertIn('[switch]$WaitForInput', script)
+        self.assertIn('Write-Host ("Reason: {0}"', script)
+        self.assertIn('Read-Host "Press Enter to close"', script)
+        self.assertIn("if ($WaitForInput)", script)
+        self.assertIn("exit $exitCode", script)
 
     def test_runner_invokes_main_once_for_daily_processing(self) -> None:
         script = RUNNER_SCRIPT_PATH.read_text(encoding="utf-8")
