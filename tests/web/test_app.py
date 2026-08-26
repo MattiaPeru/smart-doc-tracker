@@ -239,6 +239,16 @@ class WebApplicationTests(TestCase):
         self.assertIn("editorMessage.hidden = false", script.text)
         self.assertIn(".editor-message", stylesheet.text)
 
+    def test_dashboard_assigns_nested_json_values_through_the_dom(self) -> None:
+        script = self.client.get("/static/dashboard.js")
+
+        self.assertEqual(script.status_code, 200)
+        self.assertIn(
+            'const valueInput = document.createElement("input");', script.text
+        )
+        self.assertIn("valueInput.value = serialized;", script.text)
+        self.assertNotIn('value="${escapeHtml(serialized)}"', script.text)
+
     def test_dashboard_preserves_form_references_across_async_requests(self) -> None:
         script = self.client.get("/static/dashboard.js")
 

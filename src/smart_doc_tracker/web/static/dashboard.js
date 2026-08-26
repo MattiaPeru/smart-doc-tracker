@@ -209,10 +209,27 @@ function addFieldRow(container, key = "", value = "") {
   const row = document.createElement("div");
   row.className = "attribute-row";
   const serialized = typeof value === "string" ? value : JSON.stringify(value);
-  row.innerHTML = `<input class="attribute-key" aria-label="Attribute name" placeholder="field_name" value="${escapeHtml(key)}" required>
-    <input class="attribute-value" aria-label="Attribute value" placeholder="Value or JSON" value="${escapeHtml(serialized)}">
-    <button class="secondary compact remove-field" type="button" aria-label="Remove attribute">×</button>`;
-  row.querySelector(".remove-field").addEventListener("click", () => row.remove());
+  const keyInput = document.createElement("input");
+  keyInput.className = "attribute-key";
+  keyInput.setAttribute("aria-label", "Attribute name");
+  keyInput.placeholder = "field_name";
+  keyInput.value = key;
+  keyInput.required = true;
+
+  const valueInput = document.createElement("input");
+  valueInput.className = "attribute-value";
+  valueInput.setAttribute("aria-label", "Attribute value");
+  valueInput.placeholder = "Value or JSON";
+  valueInput.value = serialized;
+
+  const removeButton = document.createElement("button");
+  removeButton.className = "secondary compact remove-field";
+  removeButton.type = "button";
+  removeButton.setAttribute("aria-label", "Remove attribute");
+  removeButton.textContent = "\u00d7";
+  removeButton.addEventListener("click", () => row.remove());
+
+  row.append(keyInput, valueInput, removeButton);
   container.append(row);
 }
 
