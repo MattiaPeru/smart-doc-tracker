@@ -244,12 +244,13 @@ function apiError(payload, fallback) {
 
 async function saveEditor(event, identifier, isPending) {
   event.preventDefault();
+  const form = event.currentTarget;
   clearMessage();
   try {
     const endpoint = isPending ? `/api/pending-documents/${identifier}/confirm` : `/api/documents/${identifier}`;
     const response = await fetch(endpoint, {
       method: isPending ? "POST" : "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(editorPayload(event.currentTarget)),
+      body: JSON.stringify(editorPayload(form)),
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(apiError(payload, "The document could not be saved."));
@@ -257,7 +258,7 @@ async function saveEditor(event, identifier, isPending) {
     showMessage(isPending ? "Document confirmed and stored." : "Document updated in both local stores.");
     await Promise.all([loadDocuments(), loadPendingDocuments()]);
   } catch (error) {
-    const editorMessage = event.currentTarget.querySelector("#editor-message");
+    const editorMessage = form.querySelector("#editor-message");
     editorMessage.textContent = error.message;
     editorMessage.hidden = false;
     editorMessage.scrollIntoView({ block: "nearest" });
@@ -354,12 +355,13 @@ document.querySelector("#close-review-dialog").addEventListener("click", () => r
 
 document.querySelector("#upload-form").addEventListener("submit", async (event) => {
   event.preventDefault();
+  const form = event.currentTarget;
   clearMessage();
   try {
-    const response = await fetch("/api/uploads", { method: "POST", body: new FormData(event.currentTarget) });
+    const response = await fetch("/api/uploads", { method: "POST", body: new FormData(form) });
     const job = await response.json();
     if (!response.ok) throw new Error(apiError(job, "Upload failed."));
-    event.currentTarget.reset();
+    form.reset();
     document.querySelector("#language").value = "eng";
     await loadProcessingQueue();
     selectView("queue");

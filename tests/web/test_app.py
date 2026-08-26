@@ -239,6 +239,16 @@ class WebApplicationTests(TestCase):
         self.assertIn("editorMessage.hidden = false", script.text)
         self.assertIn(".editor-message", stylesheet.text)
 
+    def test_dashboard_preserves_form_references_across_async_requests(self) -> None:
+        script = self.client.get("/static/dashboard.js")
+
+        self.assertEqual(script.status_code, 200)
+        self.assertIn("const form = event.currentTarget;", script.text)
+        self.assertIn("body: new FormData(form)", script.text)
+        self.assertIn("form.reset();", script.text)
+        self.assertNotIn("event.currentTarget.reset();", script.text)
+        self.assertIn('form.querySelector("#editor-message")', script.text)
+
     def test_queries_dynamic_json_values_and_validates_parameter_pairs(self) -> None:
         response = self.client.get(
             "/api/documents",
