@@ -78,6 +78,7 @@ class DocumentProcessingStage(StrEnum):
     PARSING_STARTED = "parsing_started"
     PARSING_COMPLETED = "parsing_completed"
     STORAGE_STARTED = "storage_started"
+    INDEXING_STARTED = "indexing_started"
 
 
 ProcessingProgressReporter = Callable[[DocumentProcessingStage], None]
@@ -187,6 +188,7 @@ class DocumentProcessingPipeline:
             raise DatabaseError("Document storage is not configured.")
 
         if self.vector_index is not None:
+            self._report(DocumentProcessingStage.INDEXING_STARTED)
             self.vector_index.upsert_document(
                 insert_result.record.id,
                 raw_text=raw_text,

@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Smart Doc Tracker</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='/dashboard.css') }}">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Private · local · offline-first</p>
+        <h1>Smart Doc Tracker</h1>
+        <p class="subtitle">Your documents and deadlines, clearly organized.</p>
+      </div>
+      <button id="refresh-button" class="secondary" type="button">Refresh</button>
+    </header>
+
+    <main>
+      <section class="metrics" aria-label="Document summary">
+        <article><span id="total-count">–</span><small>Documents</small></article>
+        <article class="danger"><span id="expired-count">–</span><small>Expired</small></article>
+        <article class="warning"><span id="soon-count">–</span><small>Due in {{ alert_days }} days</small></article>
+        <article class="success"><span id="valid-count">–</span><small>Valid</small></article>
+      </section>
+
+      <div id="message" class="message" role="status" aria-live="polite" hidden></div>
+
+      <section class="workspace">
+        <aside>
+          <section class="panel">
+            <h2>Upload a document</h2>
+            <p>PDF or image, up to {{ max_upload_mb }} MB. Processing stays on this host.</p>
+            <form id="upload-form">
+              <label for="document-file">Document</label>
+              <input id="document-file" name="file" type="file"
+                     accept=".pdf,.bmp,.jpeg,.jpg,.png,.tif,.tiff,.webp" required>
+              <label for="language">OCR language</label>
+              <input id="language" name="language" value="eng" maxlength="32" required>
+              <button type="submit">Upload and process</button>
+            </form>
+            <div id="job-status" class="job-status" hidden></div>
+          </section>
+
+          <section class="panel">
+            <h2>Query JSON attributes</h2>
+            <p>Use a dot-separated path, for example <code>holder.city</code>.</p>
+            <form id="query-form">
+              <label for="field-key">Attribute path</label>
+              <input id="field-key" name="field_key" placeholder="policy_number" required>
+              <label for="field-value">Exact JSON value</label>
+              <input id="field-value" name="field_value" placeholder="P-123" required>
+              <div class="actions">
+                <button type="submit">Search</button>
+                <button id="clear-query" class="secondary" type="button">Clear</button>
+              </div>
+            </form>
+          </section>
+
+          <section class="legend panel" aria-label="Expiration legend">
+            <h2>Expiration alerts</h2>
+            <span><i class="dot expired"></i>Expired</span>
+            <span><i class="dot soon"></i>Due within {{ alert_days }} days</span>
+            <span><i class="dot valid"></i>Valid</span>
+            <span><i class="dot none"></i>No expiry date</span>
+          </section>
+        </aside>
+
+        <section class="documents panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Local database</p>
+              <h2>Documents</h2>
+            </div>
+            <span id="filter-label">All records</span>
+          </div>
+          <div id="document-grid" class="document-grid" aria-live="polite"></div>
+        </section>
+      </section>
+    </main>
+
+    <dialog id="document-dialog">
+      <button id="close-dialog" class="dialog-close" type="button" aria-label="Close">×</button>
+      <div id="document-detail"></div>
+    </dialog>
+
+    <script src="{{ url_for('static', path='/dashboard.js') }}" defer></script>
+  </body>
+</html>

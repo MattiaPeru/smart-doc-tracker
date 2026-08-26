@@ -5,10 +5,9 @@ searching personal documents on a single host. It combines local OCR, local lang
 models, validated structured data, local persistence, semantic search, and expiration
 reminders.
 
-The current interface is a command-line application. A local FastAPI web application
-is planned for document upload, asynchronous processing, browsing, database queries,
-expiration notifications, and coordinated document deletion. Planned features are
-identified as such throughout the documentation.
+The project includes both a command-line interface and a local FastAPI dashboard for
+asynchronous document uploads, browsing, exact dynamic-field queries, and expiration
+alerts.
 
 ## Privacy model
 
@@ -38,7 +37,7 @@ They must be completed separately before operating in an offline environment. Se
 - Document listing, retrieval, and validated updates.
 - Expiration checks, desktop notifications, and Windows Task Scheduler integration.
 
-Document deletion and the FastAPI web interface are not implemented yet.
+Document deletion is not implemented yet.
 
 ## Requirements
 
@@ -91,6 +90,18 @@ smart-doc-tracker --ask-documents "Which policies expire this year?"
 
 Use `python -m smart_doc_tracker` if the console command is unavailable. Run
 `smart-doc-tracker --help` for the complete CLI reference.
+
+## Local dashboard
+
+Start the FastAPI dashboard after the local services and Ollama model are available:
+
+```powershell
+smart-doc-tracker-web
+```
+
+Open `http://127.0.0.1:8080`. The server only accepts a loopback bind address, uses
+one upload worker, and removes each temporary upload copy after processing. Uploaded
+PDF and image files are parsed and stored through the same local pipeline as the CLI.
 
 ## Common commands
 

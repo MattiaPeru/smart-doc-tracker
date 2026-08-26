@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import date
-from typing import Protocol
+from typing import Any, Protocol
 
 from ..db.database import DocumentInsertResult, StoredDocument
 from ..models.document import DocumentData, StructuredDocumentSection
@@ -65,4 +65,10 @@ class DocumentRepository(Protocol):
 
     def get_documents_expiring_in_year(self, year: int) -> list[StoredDocument]:
         """Return documents whose normalized expiry date falls in one year."""
+        ...
+
+    def search_by_dynamic_field(
+        self, field_key: str, field_value: Any
+    ) -> list[StoredDocument]:
+        """Return documents matching an exact dynamic JSON field value."""
         ...

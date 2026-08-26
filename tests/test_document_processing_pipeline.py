@@ -109,5 +109,6 @@ class DocumentProcessingPipelineTests(TestCase):
                 DocumentProcessingStage.PARSING_STARTED,
                 DocumentProcessingStage.PARSING_COMPLETED,
                 DocumentProcessingStage.STORAGE_STARTED,
+                DocumentProcessingStage.INDEXING_STARTED,
             ],
         )

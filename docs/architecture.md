@@ -4,18 +4,17 @@
 
 Smart Doc Tracker is a local document-processing application organized around typed
 domain models, narrow interfaces, infrastructure adapters, and orchestration
-pipelines. The command-line interface is implemented. The FastAPI web interface
-described below is planned and is not available in version 0.1.0.
+pipelines. Both the command-line interface and the FastAPI dashboard are implemented.
 
 ## System context
 
 ```mermaid
 flowchart LR
     User[Local user] --> CLI[CLI]
-    User -. planned .-> Web[FastAPI web UI]
+    User --> Web[FastAPI web UI]
     CLI --> App[Application workflows]
-    Web -. planned .-> Jobs[Local job service]
-    Jobs -. planned .-> App
+    Web --> Jobs[Local job service]
+    Jobs --> App
     App --> Files[Local document folders]
     App --> OCR[Tesseract and PyMuPDF]
     App --> Ollama[Ollama on loopback]
@@ -309,9 +308,9 @@ sequenceDiagram
     Controller-->>Trigger: Sanitized JSON summary
 ```
 
-## Planned FastAPI application
+## FastAPI application
 
-FastAPI will be an inbound adapter over the same application services, not a place
+FastAPI is an inbound adapter over the same application services, not a place
 for OCR, persistence, or business rules. The browser and API server must bind to
 loopback by default.
 
@@ -332,14 +331,15 @@ Process-local background tasks are acceptable for a single-process prototype; a
 durable local queue is required before multiple workers or restart recovery are
 supported.
 
-The planned application surface includes:
+The implemented application surface includes:
 
 - upload a supported document and inspect processing status;
 - list, filter, and view validated document records;
-- edit fields through the same `DocumentData` validation;
-- query exact fields, expiration windows, and local RAG;
+- query exact dynamic fields;
 - show in-app expiration notices without placing sensitive fields in browser logs;
-- delete a document through a coordinated application-level workflow.
+
+Editing, RAG queries, coordinated deletion, and durable job recovery remain outside
+the current dashboard scope.
 
 Deletion must be implemented behind new repository and vector-index interfaces. A
 single use case should remove MongoDB sections, vector fragments, the primary record,
