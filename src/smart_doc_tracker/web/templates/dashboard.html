@@ -28,6 +28,9 @@
 
       <nav class="view-tabs" aria-label="Document views">
         <button id="documents-tab" class="tab active" type="button">Documents</button>
+        <button id="queue-tab" class="tab" type="button">
+          Processing queue <span id="queue-count" class="badge">0</span>
+        </button>
         <button id="pending-tab" class="tab" type="button">
           Awaiting confirmation <span id="pending-count" class="badge">0</span>
         </button>
@@ -46,7 +49,6 @@
               <input id="language" name="language" value="eng" maxlength="32" required>
               <button type="submit">Upload and process</button>
             </form>
-            <div id="job-status" class="job-status" hidden></div>
           </section>
 
           <section class="panel">
@@ -73,7 +75,7 @@
           </section>
         </aside>
 
-        <section class="documents panel">
+        <section id="documents-panel" class="documents panel">
           <div class="section-heading">
             <div>
               <p class="eyebrow">Local database</p>
@@ -82,6 +84,17 @@
             <span id="filter-label">All records</span>
           </div>
           <div id="document-grid" class="document-grid" aria-live="polite"></div>
+        </section>
+
+        <section id="queue-panel" class="documents panel" hidden>
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Persistent local processing</p>
+              <h2>Processing queue</h2>
+            </div>
+          </div>
+          <p class="panel-intro">Queued files are processed one at a time and resume automatically after a restart.</p>
+          <div id="queue-grid" class="document-grid" aria-live="polite"></div>
         </section>
 
         <section id="pending-panel" class="documents panel" hidden>

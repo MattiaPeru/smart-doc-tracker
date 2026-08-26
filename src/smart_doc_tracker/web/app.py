@@ -109,8 +109,16 @@ def default_web_dependencies() -> WebDependencies:
 def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
     """Create a testable local dashboard with injected application services."""
     resolved = dependencies or default_web_dependencies()
-    pending_documents = PendingDocumentService(resolved.processed_path)
-    jobs = UploadJobService(resolved.upload_processor, pending_documents)
+    data_path = resolved.processed_path.parent
+    pending_documents = PendingDocumentService(
+        resolved.processed_path,
+        data_path / "pending_confirmation",
+    )
+    jobs = UploadJobService(
+        resolved.upload_processor,
+        pending_documents,
+        data_path / "processing_queue",
+    )
     mutations = (
         DocumentMutationPipeline(
             resolved.repository_factory,
@@ -316,6 +324,7 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except (CoordinatedMutationError, FileHashingError) as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+        jobs.discard_for_pending(pending_id)
         return DocumentResponse.from_record(
             result.record,
             today=resolved.today_provider(),
@@ -327,6 +336,7 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
         """Reject and securely discard one staged upload."""
         if not pending_documents.reject(pending_id):
             raise HTTPException(status_code=404, detail="Pending document not found.")
+        jobs.discard_for_pending(pending_id)
 
     @app.post(
         "/api/uploads",
@@ -375,6 +385,11 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
             if temporary_path is not None:
                 temporary_path.unlink(missing_ok=True)
 
+    @app.get("/api/jobs", response_model=list[UploadJobResponse])
+    def list_upload_jobs() -> list[UploadJobResponse]:
+        """List documents queued, processing, or requiring attention."""
+        return [UploadJobResponse.from_job(job) for job in jobs.list_processing()]
+
     @app.get("/api/jobs/{job_id}", response_model=UploadJobResponse)
     def get_upload_job(job_id: str) -> UploadJobResponse:
         """Return the current status of one process-local upload job."""
@@ -382,6 +397,18 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
         if job is None:
             raise HTTPException(status_code=404, detail="Upload job not found.")
         return UploadJobResponse.from_job(job)
+
+    @app.delete("/api/jobs/{job_id}", status_code=204)
+    def discard_failed_upload_job(job_id: str) -> None:
+        """Discard one failed job and its locally queued source file."""
+        job = jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Upload job not found.")
+        if not jobs.discard_failed(job_id):
+            raise HTTPException(
+                status_code=409,
+                detail="Only failed upload jobs can be removed.",
+            )
 
     return app
 

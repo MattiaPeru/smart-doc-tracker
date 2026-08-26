@@ -215,6 +215,30 @@ class WebApplicationTests(TestCase):
         self.assertIn("position: fixed", stylesheet.text)
         self.assertIn("z-index: 1000", stylesheet.text)
 
+    def test_dashboard_exposes_a_separate_processing_queue(self) -> None:
+        dashboard = self.client.get("/")
+        script = self.client.get("/static/dashboard.js")
+        response = self.client.get("/api/jobs")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), [])
+        self.assertIn('id="queue-tab"', dashboard.text)
+        self.assertIn('id="queue-panel"', dashboard.text)
+        self.assertNotIn('id="job-status"', dashboard.text)
+        self.assertIn("OCR / text extraction", script.text)
+        self.assertIn("Local LLM analysis", script.text)
+        self.assertIn("discardFailedJob", script.text)
+        self.assertIn('method: "DELETE"', script.text)
+
+    def test_dashboard_shows_confirmation_errors_inside_review_dialog(self) -> None:
+        script = self.client.get("/static/dashboard.js")
+        stylesheet = self.client.get("/static/dashboard.css")
+
+        self.assertIn('id="editor-message"', script.text)
+        self.assertIn("contains incomplete JSON", script.text)
+        self.assertIn("editorMessage.hidden = false", script.text)
+        self.assertIn(".editor-message", stylesheet.text)
+
     def test_queries_dynamic_json_values_and_validates_parameter_pairs(self) -> None:
         response = self.client.get(
             "/api/documents",
@@ -283,7 +307,18 @@ class WebApplicationTests(TestCase):
         self.assertEqual(job["status"], "awaiting_confirmation")
         self.assertIsNotNone(job["pending_id"])
         self.assertTrue(self.processed_paths)
-        self.assertTrue(self.processed_paths[0].exists())
+        self.assertFalse(self.processed_paths[0].exists())
+        self.assertEqual(
+            len(
+                list(
+                    (
+                        Path(self.temporary_directory.name)
+                        / "pending_confirmation"
+                    ).glob("*.png")
+                )
+            ),
+            1,
+        )
         pending = self.client.get("/api/pending-documents").json()
         self.assertEqual(len(pending), 1)
 

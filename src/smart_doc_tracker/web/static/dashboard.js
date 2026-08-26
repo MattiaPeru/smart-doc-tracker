@@ -1,4 +1,5 @@
 const grid = document.querySelector("#document-grid");
+const queueGrid = document.querySelector("#queue-grid");
 const pendingGrid = document.querySelector("#pending-grid");
 const message = document.querySelector("#message");
 const filterLabel = document.querySelector("#filter-label");
@@ -82,6 +83,40 @@ function renderPending(items) {
   if (!items.length) pendingGrid.innerHTML = '<p class="empty">No documents are awaiting confirmation.</p>';
 }
 
+function processingLabel(status) {
+  const labels = {
+    queued: "Waiting for processing",
+    extracting: "OCR / text extraction",
+    parsing: "Local LLM analysis",
+    failed: "Processing failed",
+  };
+  return labels[status] || status.replaceAll("_", " ");
+}
+
+function renderQueue(items) {
+  queueGrid.replaceChildren();
+  document.querySelector("#queue-count").textContent = items.length;
+  let queuedPosition = 0;
+  items.forEach((item) => {
+    const card = document.createElement("article");
+    card.className = "document-card queue-card";
+    const failed = item.status === "failed";
+    if (item.status === "queued") queuedPosition += 1;
+    const position = item.status === "queued" ? `Position ${queuedPosition}` : "In progress";
+    card.innerHTML = `<span class="status-bar ${failed ? "expired" : "queue"}"></span>
+      <div><h3>${escapeHtml(item.file_name)}</h3>
+      <p>${escapeHtml(processingLabel(item.status))}</p></div>
+      <div class="expiry">${failed
+        ? `<span>Needs attention</span><button class="danger-button compact discard-job" type="button">Remove</button>`
+        : escapeHtml(position)}</div>`;
+    if (failed) {
+      card.querySelector(".discard-job").addEventListener("click", () => discardFailedJob(item.id));
+    }
+    queueGrid.append(card);
+  });
+  if (!items.length) queueGrid.innerHTML = '<p class="empty">No documents are waiting to be processed.</p>';
+}
+
 function showDetail(item) {
   const detail = document.querySelector("#document-detail");
   detail.innerHTML = `<p class="eyebrow">${escapeHtml(expirationLabel(item))}</p>
@@ -158,6 +193,7 @@ function showEditor(item, isPending) {
       </div>
       <div class="attributes-heading"><h3>Extracted attributes</h3><button id="add-field" class="secondary compact" type="button">Add field</button></div>
       <div id="attribute-fields"></div>
+      <div id="editor-message" class="editor-message" role="alert" hidden></div>
       <div class="actions dialog-actions"><button type="submit">${isPending ? "Confirm and save" : "Save changes"}</button>
       ${isPending ? '<button id="reject-pending" class="danger-button" type="button">Reject</button>' : ""}</div>
     </form>`;
@@ -185,8 +221,13 @@ function editorPayload(form) {
   const extractedData = {};
   form.querySelectorAll(".attribute-row").forEach((row) => {
     const key = row.querySelector(".attribute-key").value.trim();
-    const rawValue = row.querySelector(".attribute-value").value.trim();
+    const valueInput = row.querySelector(".attribute-value");
+    const rawValue = valueInput.value.trim();
     if (!key) throw new Error("Every custom field must have a name.");
+    if (/^[\[{]+$/.test(rawValue)) {
+      valueInput.focus();
+      throw new Error(`Field "${key}" contains incomplete JSON. Replace it with valid JSON (for example []) or remove the field.`);
+    }
     try { extractedData[key] = JSON.parse(rawValue); } catch (_error) { extractedData[key] = rawValue; }
   });
   return {
@@ -215,6 +256,21 @@ async function saveEditor(event, identifier, isPending) {
     reviewDialog.close();
     showMessage(isPending ? "Document confirmed and stored." : "Document updated in both local stores.");
     await Promise.all([loadDocuments(), loadPendingDocuments()]);
+  } catch (error) {
+    const editorMessage = event.currentTarget.querySelector("#editor-message");
+    editorMessage.textContent = error.message;
+    editorMessage.hidden = false;
+    editorMessage.scrollIntoView({ block: "nearest" });
+  }
+}
+
+async function discardFailedJob(jobId) {
+  if (!window.confirm("Remove this failed upload and its local queued file?")) return;
+  try {
+    const response = await fetch(`/api/jobs/${jobId}`, { method: "DELETE" });
+    if (!response.ok) throw new Error(apiError(await response.json(), "The failed upload could not be removed."));
+    showMessage("Failed upload removed.");
+    await loadProcessingQueue();
   } catch (error) { showMessage(error.message, true); }
 }
 
@@ -259,12 +315,22 @@ async function loadPendingDocuments() {
   } catch (error) { showMessage(error.message, true); }
 }
 
-function selectView(pending) {
-  document.querySelector(".documents.panel:not(#pending-panel)").hidden = pending;
-  document.querySelector("#pending-panel").hidden = !pending;
-  document.querySelector("#documents-tab").classList.toggle("active", !pending);
-  document.querySelector("#pending-tab").classList.toggle("active", pending);
-  if (pending) loadPendingDocuments();
+async function loadProcessingQueue() {
+  try {
+    const response = await fetch("/api/jobs");
+    const payload = await response.json();
+    if (!response.ok) throw new Error(apiError(payload, "The processing queue could not be loaded."));
+    renderQueue(payload);
+  } catch (error) { showMessage(error.message, true); }
+}
+
+function selectView(view) {
+  ["documents", "queue", "pending"].forEach((name) => {
+    document.querySelector(`#${name}-panel`).hidden = name !== view;
+    document.querySelector(`#${name}-tab`).classList.toggle("active", name === view);
+  });
+  if (view === "queue") loadProcessingQueue();
+  if (view === "pending") loadPendingDocuments();
 }
 
 document.querySelector("#query-form").addEventListener("submit", (event) => {
@@ -279,41 +345,39 @@ document.querySelector("#clear-query").addEventListener("click", () => {
   filterLabel.textContent = "All records";
   loadDocuments();
 });
-document.querySelector("#documents-tab").addEventListener("click", () => selectView(false));
-document.querySelector("#pending-tab").addEventListener("click", () => selectView(true));
-document.querySelector("#refresh-button").addEventListener("click", () => Promise.all([loadDocuments(), loadPendingDocuments()]));
+document.querySelector("#documents-tab").addEventListener("click", () => selectView("documents"));
+document.querySelector("#queue-tab").addEventListener("click", () => selectView("queue"));
+document.querySelector("#pending-tab").addEventListener("click", () => selectView("pending"));
+document.querySelector("#refresh-button").addEventListener("click", () => Promise.all([loadDocuments(), loadProcessingQueue(), loadPendingDocuments()]));
 document.querySelector("#close-dialog").addEventListener("click", () => dialog.close());
 document.querySelector("#close-review-dialog").addEventListener("click", () => reviewDialog.close());
 
 document.querySelector("#upload-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   clearMessage();
-  const status = document.querySelector("#job-status");
-  status.hidden = false;
-  status.textContent = "Uploading…";
   try {
     const response = await fetch("/api/uploads", { method: "POST", body: new FormData(event.currentTarget) });
     const job = await response.json();
     if (!response.ok) throw new Error(apiError(job, "Upload failed."));
-    await monitorJob(job.id, status);
+    event.currentTarget.reset();
+    document.querySelector("#language").value = "eng";
+    await loadProcessingQueue();
+    selectView("queue");
+    monitorJob(job.id).catch((error) => showMessage(error.message, true));
   } catch (error) {
-    status.textContent = "Upload failed.";
     showMessage(error.message, true);
   }
 });
 
-async function monitorJob(jobId, status) {
+async function monitorJob(jobId) {
   while (true) {
     const response = await fetch(`/api/jobs/${jobId}`);
     const job = await response.json();
     if (!response.ok) throw new Error(apiError(job, "Job status is unavailable."));
-    status.textContent = `Processing status: ${job.status}`;
+    await loadProcessingQueue();
     if (job.status === "awaiting_confirmation") {
-      showMessage("Extraction completed. Review the document before saving it.");
-      document.querySelector("#upload-form").reset();
-      document.querySelector("#language").value = "eng";
       await loadPendingDocuments();
-      selectView(true);
+      selectView("pending");
       return;
     }
     if (job.status === "failed") throw new Error(job.error);
@@ -321,4 +385,8 @@ async function monitorJob(jobId, status) {
   }
 }
 
-Promise.all([loadDocuments(), loadPendingDocuments()]);
+Promise.all([loadDocuments(), loadProcessingQueue(), loadPendingDocuments()]);
+window.setInterval(() => {
+  loadProcessingQueue();
+  loadPendingDocuments();
+}, 2000);
