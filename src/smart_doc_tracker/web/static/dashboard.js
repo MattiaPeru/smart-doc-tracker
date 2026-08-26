@@ -8,10 +8,25 @@ const reviewDialog = document.querySelector("#review-dialog");
 function showMessage(text, isError = false) {
   message.textContent = text;
   message.classList.toggle("error", isError);
+  message.setAttribute("role", isError ? "alert" : "status");
+  message.tabIndex = 0;
+  message.title = "Click to dismiss";
   message.hidden = false;
 }
 
-function clearMessage() { message.hidden = true; }
+function clearMessage() {
+  message.hidden = true;
+  message.removeAttribute("tabindex");
+  message.removeAttribute("title");
+}
+
+message.addEventListener("click", clearMessage);
+message.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" || event.key === " " || event.key === "Escape") {
+    event.preventDefault();
+    clearMessage();
+  }
+});
 
 function expirationLabel(document) {
   if (!document.expiry_date) return "No expiry date";

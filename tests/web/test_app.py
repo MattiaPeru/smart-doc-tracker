@@ -194,6 +194,17 @@ class WebApplicationTests(TestCase):
             ["expired", "soon", "valid", "none"],
         )
 
+    def test_dashboard_messages_are_visible_and_dismissible(self) -> None:
+        script = self.client.get("/static/dashboard.js")
+        stylesheet = self.client.get("/static/dashboard.css")
+
+        self.assertEqual(script.status_code, 200)
+        self.assertIn('message.addEventListener("click", clearMessage)', script.text)
+        self.assertIn('isError ? "alert" : "status"', script.text)
+        self.assertEqual(stylesheet.status_code, 200)
+        self.assertIn("position: fixed", stylesheet.text)
+        self.assertIn("z-index: 1000", stylesheet.text)
+
     def test_queries_dynamic_json_values_and_validates_parameter_pairs(self) -> None:
         response = self.client.get(
             "/api/documents",

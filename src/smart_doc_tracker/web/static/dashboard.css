@@ -137,7 +137,29 @@ button.compact { padding: 6px 10px; }
 .panel-intro { margin-top: 14px; }
 
 .message, .job-status { margin-bottom: 18px; border-radius: 9px; padding: 11px 14px; background: #e1eee8; color: var(--accent-dark); }
+.message {
+  position: fixed;
+  z-index: 1000;
+  top: 18px;
+  right: 18px;
+  width: min(420px, calc(100% - 36px));
+  margin: 0;
+  padding-right: 38px;
+  box-shadow: 0 12px 36px rgb(18 28 24 / 22%);
+  cursor: pointer;
+}
+.message::after {
+  content: "\00d7";
+  position: absolute;
+  top: 50%;
+  right: 14px;
+  translate: 0 -50%;
+  font-size: 1.35rem;
+  line-height: 1;
+}
+.message:focus-visible { outline: 3px solid rgb(23 107 82 / 35%); outline-offset: 2px; }
 .message.error { background: #f4dddd; color: #7f2727; }
+.message.error:focus-visible { outline-color: rgb(179 58 58 / 40%); }
 .job-status { margin: 14px 0 0; font-size: .84rem; }
 
 dialog { width: min(680px, calc(100% - 32px)); border: 0; border-radius: 16px; padding: 26px; box-shadow: 0 25px 80px rgb(0 0 0 / 25%); }
