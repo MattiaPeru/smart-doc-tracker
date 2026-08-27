@@ -91,6 +91,13 @@ Update the README for capability-level changes, the user or operations guide for
 procedures, the data model for persistence changes, and the changelog for user-visible
 behavior. Add an ADR for decisions that are expensive to reverse.
 
+After changing a public class, function, method, model field, or protocol, regenerate
+the compact agent API index without importing application modules:
+
+```powershell
+.venv\Scripts\python.exe scripts\generate_agent_reference.py
+```
+
 Keep planned behavior clearly marked until tests verify its implementation.
 
 ## Quality commands

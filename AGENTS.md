@@ -1,5 +1,16 @@
 # Smart Doc Tracker Guidance
 
+## Repository navigation
+
+- Read `docs/agent/README.md` before exploring the source tree.
+- Use `docs/agent/ARCHITECTURE.md` and `docs/agent/WORKFLOWS.md` to identify the
+  responsible component and its dependencies.
+- Search `docs/agent/PUBLIC_API.md` for public signatures before opening source.
+- Inspect implementation files and focused tests only when required by the task.
+- Regenerate the public API reference after changing public classes, functions,
+  methods, models, or protocols with
+  `.venv\Scripts\python.exe scripts\generate_agent_reference.py`.
+
 ## Language
 
 - Write all generated code strictly in English.
