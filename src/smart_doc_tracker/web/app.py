@@ -185,9 +185,6 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
                 "dashboard_style": (_WEB_ROOT / "static" / "dashboard.css").read_text(
                     encoding="utf-8"
                 ),
-                "dashboard_script": (
-                    _WEB_ROOT / "static" / "dashboard.js"
-                ).read_text(encoding="utf-8"),
             },
         )
         response.headers["Cache-Control"] = "no-store, max-age=0"

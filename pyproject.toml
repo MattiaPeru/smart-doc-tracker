@@ -32,7 +32,11 @@ where = ["src"]
 include = ["smart_doc_tracker*"]
 
 [tool.setuptools.package-data]
-smart_doc_tracker = ["web/templates/*.html", "web/static/*.css", "web/static/*.js"]
+smart_doc_tracker = [
+    "web/templates/*.html",
+    "web/static/*.css",
+    "web/static/js/*.js",
+]
 
 [tool.ruff]
 target-version = "py311"

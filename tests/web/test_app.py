@@ -151,6 +151,20 @@ class FakeVectorIndex:
 
 
 class WebApplicationTests(TestCase):
+    dashboard_module_paths = (
+        "/static/js/dashboard.js",
+        "/static/js/errors.js",
+        "/static/js/messages.js",
+        "/static/js/attribute-model.js",
+        "/static/js/attribute-view.js",
+        "/static/js/attribute-editor.js",
+    )
+
+    def dashboard_source(self) -> str:
+        modules = [self.client.get(path) for path in self.dashboard_module_paths]
+        self.assertTrue(all(module.status_code == 200 for module in modules))
+        return "\n".join(module.text for module in modules)
+
     def setUp(self) -> None:
         self.records = [
             _record("expired", expiry_date="2026-08-25"),
@@ -205,7 +219,7 @@ class WebApplicationTests(TestCase):
         )
 
     def test_dashboard_messages_are_visible_and_dismissible(self) -> None:
-        script = self.client.get("/static/dashboard.js")
+        script = self.client.get("/static/js/messages.js")
         stylesheet = self.client.get("/static/dashboard.css")
 
         self.assertEqual(script.status_code, 200)
@@ -216,7 +230,7 @@ class WebApplicationTests(TestCase):
         self.assertIn("z-index: 1000", stylesheet.text)
 
     def test_dashboard_uses_simple_messages_without_storage_details(self) -> None:
-        script = self.client.get("/static/dashboard.js").text
+        script = self.dashboard_source()
 
         self.assertIn("Document added successfully.", script)
         self.assertIn("Changes saved successfully.", script)
@@ -229,19 +243,19 @@ class WebApplicationTests(TestCase):
         self.assertNotIn("Delete this document from MongoDB and ChromaDB", script)
         self.assertNotIn("job.error", script)
 
-    def test_dashboard_inlines_current_assets_to_avoid_stale_cache(self) -> None:
+    def test_dashboard_loads_modular_scripts_without_stale_cache(self) -> None:
         dashboard = self.client.get("/")
-        script = self.client.get("/static/dashboard.js")
+        script = self.client.get("/static/js/dashboard.js")
 
         self.assertNotIn("/static/dashboard.css", dashboard.text)
-        self.assertNotIn("/static/dashboard.js", dashboard.text)
-        self.assertIn('list.className = "compact-list-editor"', dashboard.text)
+        self.assertIn('type="module" src="/static/js/dashboard.js"', dashboard.text)
+        self.assertIn('from "./attribute-editor.js"', script.text)
         self.assertEqual(dashboard.headers["cache-control"], "no-store, max-age=0")
         self.assertEqual(script.headers["cache-control"], "no-store, max-age=0")
 
     def test_dashboard_exposes_a_separate_processing_queue(self) -> None:
         dashboard = self.client.get("/")
-        script = self.client.get("/static/dashboard.js")
+        script = self.client.get("/static/js/dashboard.js")
         response = self.client.get("/api/jobs")
 
         self.assertEqual(response.status_code, 200)
@@ -255,16 +269,16 @@ class WebApplicationTests(TestCase):
         self.assertIn('method: "DELETE"', script.text)
 
     def test_dashboard_shows_confirmation_errors_inside_review_dialog(self) -> None:
-        script = self.client.get("/static/dashboard.js")
+        script = self.dashboard_source()
         stylesheet = self.client.get("/static/dashboard.css")
 
-        self.assertIn('id="editor-message"', script.text)
-        self.assertIn("Give every field a name before saving", script.text)
-        self.assertIn("editorMessage.hidden = false", script.text)
+        self.assertIn('id="editor-message"', script)
+        self.assertIn("Give every field a name before saving", script)
+        self.assertIn("editorMessage.hidden = false", script)
         self.assertIn(".editor-message", stylesheet.text)
 
     def test_dashboard_renders_nested_values_as_expandable_fields(self) -> None:
-        script = self.client.get("/static/dashboard.js")
+        script = self.client.get("/static/js/attribute-editor.js")
         stylesheet = self.client.get("/static/dashboard.css")
 
         self.assertEqual(script.status_code, 200)
@@ -280,37 +294,41 @@ class WebApplicationTests(TestCase):
         self.assertIn(".nested-value > summary", stylesheet.text)
 
     def test_dashboard_shows_extracted_attributes_without_raw_json(self) -> None:
-        script = self.client.get("/static/dashboard.js")
+        script = self.dashboard_source()
 
-        self.assertIn("renderAttributeView", script.text)
-        self.assertIn('class="attribute-view"', script.text)
-        self.assertIn('keyLabel.textContent = key', script.text)
-        self.assertNotIn("JSON.stringify(item.extracted_data", script.text)
+        self.assertIn("renderAttributeView", script)
+        self.assertIn('class="attribute-view"', script)
+        self.assertIn('keyLabel.textContent = key', script)
+        self.assertNotIn("JSON.stringify(item.extracted_data", script)
 
     def test_dashboard_flattens_common_extracted_lists_for_people(self) -> None:
-        script = self.client.get("/static/dashboard.js")
+        script = self.dashboard_source()
+        stylesheet = self.client.get("/static/dashboard.css").text
 
-        self.assertIn('return "typed-array"', script.text)
-        self.assertIn('return "single-field-array"', script.text)
-        self.assertIn('return "scalar-array"', script.text)
-        self.assertIn("value.map((item) => [item.type, item.value])", script.text)
-        self.assertIn("{ type, value: readNodeValue(child) }", script.text)
-        self.assertIn('list.className = "compact-list-editor"', script.text)
-        self.assertIn('values.className = "compact-list-view-values"', script.text)
-        self.assertIn("item[itemField]", script.text)
-        self.assertIn('details.className = "nested-value grouped-list-editor"', script.text)
-        self.assertIn('fieldInput.className = "grouped-list-key"', script.text)
-        self.assertIn("groupedSingleFieldItems(value).forEach", script.text)
-        self.assertIn('fieldDetails.className = "grouped-list-field"', script.text)
-        self.assertIn('removeButton.className = "secondary compact grouped-list-remove"', script.text)
-        self.assertIn("fieldDetails.remove()", script.text)
-        self.assertIn("updateGroupedListSummary", script.text)
-        self.assertIn("records.sort", script.text)
-        self.assertIn(".grouped-list-row", self.client.get("/static/dashboard.css").text)
-        self.assertIn(".grouped-list-field > summary", self.client.get("/static/dashboard.css").text)
-        self.assertIn(".grouped-list-remove", self.client.get("/static/dashboard.css").text)
-        self.assertIn("grid-template-columns: minmax(0, 1fr) auto", self.client.get("/static/dashboard.css").text)
-        self.assertIn("overflow-wrap: anywhere", self.client.get("/static/dashboard.css").text)
+        self.assertIn('return "typed-array"', script)
+        self.assertIn('return "single-field-array"', script)
+        self.assertIn('return "scalar-array"', script)
+        self.assertIn("value.map((item) => [item.type, item.value])", script)
+        self.assertIn("{ type, value: readNodeValue(child) }", script)
+        self.assertIn('list.className = "compact-list-editor"', script)
+        self.assertIn('values.className = "compact-list-view-values"', script)
+        self.assertIn("item[itemField]", script)
+        self.assertIn('details.className = "nested-value grouped-list-editor"', script)
+        self.assertIn('fieldInput.className = "grouped-list-key"', script)
+        self.assertIn("groupedSingleFieldItems(value).forEach", script)
+        self.assertIn('fieldDetails.className = "grouped-list-field"', script)
+        self.assertIn(
+            'removeButton.className = "secondary compact grouped-list-remove"',
+            script,
+        )
+        self.assertIn("fieldDetails.remove()", script)
+        self.assertIn("updateGroupedListSummary", script)
+        self.assertIn("records.sort", script)
+        self.assertIn(".grouped-list-row", stylesheet)
+        self.assertIn(".grouped-list-field > summary", stylesheet)
+        self.assertIn(".grouped-list-remove", stylesheet)
+        self.assertIn("grid-template-columns: minmax(0, 1fr) auto", stylesheet)
+        self.assertIn("overflow-wrap: anywhere", stylesheet)
 
     def test_document_editor_allows_scrolling_long_nested_values(self) -> None:
         stylesheet = self.client.get("/static/dashboard.css")
@@ -320,14 +338,13 @@ class WebApplicationTests(TestCase):
         self.assertIn("min-width: 520px", stylesheet.text)
 
     def test_dashboard_preserves_form_references_across_async_requests(self) -> None:
-        script = self.client.get("/static/dashboard.js")
+        script = self.dashboard_source()
 
-        self.assertEqual(script.status_code, 200)
-        self.assertIn("const form = event.currentTarget;", script.text)
-        self.assertIn("body: new FormData(form)", script.text)
-        self.assertIn("form.reset();", script.text)
-        self.assertNotIn("event.currentTarget.reset();", script.text)
-        self.assertIn('form.querySelector("#editor-message")', script.text)
+        self.assertIn("const form = event.currentTarget;", script)
+        self.assertIn("body: new FormData(form)", script)
+        self.assertIn("form.reset();", script)
+        self.assertNotIn("event.currentTarget.reset();", script)
+        self.assertIn('form.querySelector("#editor-message")', script)
 
     def test_queries_dynamic_json_values_and_validates_parameter_pairs(self) -> None:
         response = self.client.get(
@@ -372,7 +389,7 @@ class WebApplicationTests(TestCase):
         )
 
     def test_dashboard_loads_indexed_content_only_on_request(self) -> None:
-        script = self.client.get("/static/dashboard.js")
+        script = self.client.get("/static/js/dashboard.js")
 
         self.assertEqual(script.status_code, 200)
         self.assertIn("Complete indexed content", script.text)
