@@ -320,11 +320,22 @@ function addAttributeViewNode(container, key, value) {
     const children = document.createElement("div");
     children.className = "attribute-view-children";
     groupedSingleFieldItems(value).forEach((items, itemField) => {
+      const fieldDetails = document.createElement("details");
+      fieldDetails.className = "grouped-list-field grouped-list-view-field";
+      const fieldSummary = document.createElement("summary");
+      const fieldSummaryContent = document.createElement("span");
+      fieldSummaryContent.className = "grouped-list-field-summary";
+      const summaryKey = document.createElement("span");
+      summaryKey.className = "attribute-view-key";
+      summaryKey.textContent = itemField;
+      const summaryCount = document.createElement("span");
+      summaryCount.textContent = `${items.length} ${items.length === 1 ? "item" : "items"}`;
+      fieldSummaryContent.append(summaryKey, summaryCount);
+      fieldSummary.append(fieldSummaryContent);
       const row = document.createElement("div");
       row.className = "attribute-view-row compact-list-view-row";
-      const fieldLabel = document.createElement("span");
-      fieldLabel.className = "attribute-view-key";
-      fieldLabel.textContent = itemField;
+      const fieldSpacer = document.createElement("span");
+      fieldSpacer.setAttribute("aria-hidden", "true");
       const values = document.createElement("span");
       values.className = "compact-list-view-values";
       items.forEach((item) => {
@@ -333,8 +344,9 @@ function addAttributeViewNode(container, key, value) {
         itemValue.textContent = displayScalarValue(item.value);
         values.append(itemValue);
       });
-      row.append(fieldLabel, values);
-      children.append(row);
+      row.append(fieldSpacer, values);
+      fieldDetails.append(fieldSummary, row);
+      children.append(fieldDetails);
     });
     details.append(summary, children);
     container.append(details);
@@ -435,12 +447,27 @@ function addCompactListItem(container, value, onRemove = null, originalIndex = n
 }
 
 function addGroupedListRow(container, node, itemField, items) {
+  const fieldDetails = document.createElement("details");
+  fieldDetails.className = "grouped-list-field";
+  const fieldSummary = document.createElement("summary");
+  const fieldSummaryContent = document.createElement("span");
+  fieldSummaryContent.className = "grouped-list-field-summary";
+  const summaryKey = document.createElement("span");
+  summaryKey.className = "grouped-list-summary-key";
+  summaryKey.textContent = itemField || "New field";
+  const summaryCount = document.createElement("span");
+  summaryCount.className = "grouped-list-summary-count";
+  fieldSummaryContent.append(summaryKey, summaryCount);
+  fieldSummary.append(fieldSummaryContent);
   const groupedRow = document.createElement("div");
   groupedRow.className = "grouped-list-row";
   const fieldInput = document.createElement("input");
   fieldInput.className = "grouped-list-key";
   fieldInput.setAttribute("aria-label", "Field name");
   fieldInput.value = itemField;
+  fieldInput.addEventListener("input", () => {
+    summaryKey.textContent = fieldInput.value.trim() || "New field";
+  });
   const list = document.createElement("div");
   list.className = "compact-list-editor";
   items.forEach((item) => addCompactListItem(
@@ -460,7 +487,16 @@ function addGroupedListRow(container, node, itemField, items) {
   });
   list.append(addButton);
   groupedRow.append(fieldInput, list);
-  container.append(groupedRow);
+  fieldDetails.append(fieldSummary, groupedRow);
+  if (!itemField) fieldDetails.open = true;
+  container.append(fieldDetails);
+  updateGroupedListSummary(fieldDetails);
+}
+
+function updateGroupedListSummary(fieldDetails) {
+  const count = fieldDetails.querySelectorAll(".compact-list-item").length;
+  fieldDetails.querySelector(".grouped-list-summary-count").textContent =
+    `${count} ${count === 1 ? "item" : "items"}`;
 }
 
 function updateContainerSummary(node) {
@@ -469,6 +505,7 @@ function updateContainerSummary(node) {
   const count = nested
     ? Array.from(nested.children).filter((child) => child.classList.contains("attribute-node")).length
     : node.querySelectorAll(":scope > .attribute-row .compact-list-item").length;
+  node.querySelectorAll(":scope > .attribute-row .grouped-list-field").forEach(updateGroupedListSummary);
   const noun = isArrayKind(kind) ? (count === 1 ? "item" : "items") : (count === 1 ? "field" : "fields");
   node.querySelector(":scope > .attribute-row .nested-summary-text").textContent = `${count} ${noun}`;
 }
