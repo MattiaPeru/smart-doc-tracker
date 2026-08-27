@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import logging
 import os
 import re
 import secrets
@@ -85,6 +86,8 @@ _CONTENT_SECURITY_POLICY = "; ".join(
         "style-src 'self'",
     )
 )
+_LOG_LEVELS = ("debug", "info", "warning", "error", "critical")
+_LOGGER = logging.getLogger(__name__)
 
 
 class LocalStaticFiles(StaticFiles):
@@ -232,7 +235,25 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
             supplied_token = request.headers.get(_CSRF_HEADER, "")
             if not secrets.compare_digest(supplied_token, csrf_token):
                 return _secure_response(Response(status_code=403))
-        return _secure_response(await call_next(request))
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            _LOGGER.error(
+                "Request %s failed with an unhandled %s.",
+                request.method,
+                type(exc).__name__,
+            )
+            raise
+        if response.status_code >= 500:
+            route = request.scope.get("route")
+            route_pattern = getattr(route, "path", "unmatched route")
+            _LOGGER.error(
+                "Request %s %s returned HTTP %s.",
+                request.method,
+                route_pattern,
+                response.status_code,
+            )
+        return _secure_response(response)
 
     def repository() -> Iterator[DocumentRepository]:
         """Open and close one local repository for a request."""
@@ -600,9 +621,21 @@ def run(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Run the local document dashboard.")
     parser.add_argument("--host", default="127.0.0.1", choices=("127.0.0.1", "::1"))
     parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument(
+        "--log-level",
+        choices=_LOG_LEVELS,
+        default="info",
+        help="Terminal detail level (default: info).",
+    )
+    parser.add_argument(
+        "--access-log",
+        action="store_true",
+        help="Show one terminal line for every HTTP request.",
+    )
     arguments = parser.parse_args(argv)
     if not 1 <= arguments.port <= 65_535:
         parser.error("--port must be between 1 and 65535")
+    _configure_application_logging(arguments.log_level)
     import uvicorn
 
     uvicorn.run(
@@ -611,4 +644,22 @@ def run(argv: Sequence[str] | None = None) -> None:
         host=arguments.host,
         port=arguments.port,
         workers=1,
+        log_level=arguments.log_level,
+        access_log=arguments.access_log,
     )
+
+
+def _configure_application_logging(level: str) -> None:
+    """Send application progress and safe diagnostics to the server terminal."""
+    application_logger = logging.getLogger("smart_doc_tracker")
+    handler = logging.StreamHandler()
+    handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+            datefmt="%H:%M:%S",
+        )
+    )
+    application_logger.handlers.clear()
+    application_logger.addHandler(handler)
+    application_logger.setLevel(level.upper())
+    application_logger.propagate = False

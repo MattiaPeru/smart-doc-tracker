@@ -60,7 +60,39 @@ class BlockingVectorIndex:
         self.updated.append(document_id)
 
 
+class FailingVectorIndex:
+    def update_document_data(
+        self,
+        document_id: str,
+        document: DocumentData,
+    ) -> None:
+        raise RuntimeError("Sensitive local summary")
+
+
 class PersistentIndexJobTests(TestCase):
+    def test_reports_refresh_failure_without_document_contents(self) -> None:
+        with TemporaryDirectory() as directory:
+            jobs = DocumentIndexJobService(
+                lambda: FakeRepository(_record()),
+                FailingVectorIndex(),  # type: ignore[arg-type]
+                Path(directory) / "index_update_queue",
+            )
+            try:
+                with self.assertLogs(
+                    "smart_doc_tracker.web.index_jobs", level="ERROR"
+                ) as captured:
+                    submitted = jobs.submit("document-id")
+                    for _ in range(100):
+                        job = jobs.get(submitted.id)
+                        if job is not None and job.status == "failed":
+                            break
+                        time.sleep(0.01)
+                log_output = "\n".join(captured.output)
+                self.assertIn("failed (RuntimeError)", log_output)
+                self.assertNotIn("Sensitive local summary", log_output)
+            finally:
+                jobs.close()
+
     def test_persists_only_identifiers_before_background_refresh(self) -> None:
         with TemporaryDirectory() as directory:
             queue_path = Path(directory) / "index_update_queue"

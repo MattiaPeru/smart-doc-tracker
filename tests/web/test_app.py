@@ -437,6 +437,40 @@ class WebApplicationTests(TestCase):
             404,
         )
 
+    def test_logs_server_errors_using_route_patterns(self) -> None:
+        def unused_processor(
+            path: Path,
+            language: str,
+            reporter: Any,
+        ) -> DocumentProcessingResult:
+            raise AssertionError("No upload is expected in this test")
+
+        unavailable_app = create_app(
+            WebDependencies(
+                repository_factory=lambda: self.repository,
+                upload_processor=unused_processor,
+                today_provider=lambda: date(2026, 8, 26),
+                processed_path=Path(self.temporary_directory.name) / "unavailable",
+            )
+        )
+        with TestClient(
+            unavailable_app,
+            base_url="http://127.0.0.1:8080",
+            headers={"X-Smart-Doc-CSRF": unavailable_app.state.csrf_token},
+        ) as client:
+            with self.assertLogs(
+                "smart_doc_tracker.web.app", level="ERROR"
+            ) as captured:
+                response = client.get("/api/documents/soon/indexed-content")
+
+        self.assertEqual(response.status_code, 503)
+        log_output = "\n".join(captured.output)
+        self.assertIn(
+            "GET /api/documents/{document_id}/indexed-content returned HTTP 503",
+            log_output,
+        )
+        self.assertNotIn("/soon/", log_output)
+
     def test_dashboard_loads_indexed_content_only_on_request(self) -> None:
         script = self.client.get("/static/js/dashboard.js")
 

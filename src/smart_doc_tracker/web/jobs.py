@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -15,6 +16,8 @@ from uuid import uuid4
 
 from ..pipeline import DocumentProcessingResult, DocumentProcessingStage
 from .pending import PendingDocumentService
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class UploadJobStatus(StrEnum):
@@ -102,6 +105,7 @@ class UploadJobService:
             self._manifest_path(job.id).unlink(missing_ok=True)
             source_path.unlink(missing_ok=True)
             raise
+        _LOGGER.info("Upload job %s queued.", job.id)
         return job
 
     def get(self, job_id: str) -> UploadJob | None:
@@ -201,6 +205,7 @@ class UploadJobService:
         with self._lock:
             stored = self._jobs[job_id]
         try:
+            _LOGGER.info("Upload job %s started.", job_id)
             self._set_status(job_id, UploadJobStatus.EXTRACTING)
             result = self._processor(
                 stored.source_path,
@@ -221,7 +226,15 @@ class UploadJobService:
                 status=UploadJobStatus.AWAITING_CONFIRMATION,
                 pending_id=pending.id,
             )
-        except Exception:
+            _LOGGER.info("Upload job %s is ready for confirmation.", job_id)
+        except Exception as exc:
+            # Exception messages can contain OCR or model output. Record the type
+            # and job identifier for terminal diagnostics without leaking content.
+            _LOGGER.error(
+                "Upload job %s failed during local processing (%s).",
+                job_id,
+                type(exc).__name__,
+            )
             self._update(
                 job_id,
                 status=UploadJobStatus.FAILED,
@@ -237,6 +250,11 @@ class UploadJobService:
         status = status_by_stage.get(stage)
         if status is not None:
             self._set_status(job_id, status)
+        _LOGGER.info(
+            "Upload job %s: %s.",
+            job_id,
+            stage.value.replace("_", " "),
+        )
 
     def _set_status(self, job_id: str, status: UploadJobStatus) -> None:
         """Set a progress-only job status."""

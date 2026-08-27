@@ -40,16 +40,29 @@ class PersistentUploadJobTests(TestCase):
             pending = PendingDocumentService(root / "processed")
             jobs = UploadJobService(fail, pending, root / "processing_queue")
             try:
-                submitted = jobs.submit(upload, file_name="invoice.png", language="eng")
-                for _ in range(100):
-                    job = jobs.get(submitted.id)
-                    if job is not None and job.status == "failed":
-                        break
-                    time.sleep(0.01)
+                with self.assertLogs(
+                    "smart_doc_tracker.web.jobs", level="ERROR"
+                ) as captured:
+                    submitted = jobs.submit(
+                        upload,
+                        file_name="invoice.png",
+                        language="eng",
+                    )
+                    for _ in range(100):
+                        job = jobs.get(submitted.id)
+                        if job is not None and job.status == "failed":
+                            break
+                        time.sleep(0.01)
                 queued_files = list(
                     (root / "processing_queue").glob(f"{submitted.id}.*")
                 )
                 self.assertEqual(len(queued_files), 2)
+                log_output = "\n".join(captured.output)
+                self.assertIn(
+                    "failed during local processing (RuntimeError)",
+                    log_output,
+                )
+                self.assertNotIn("Sensitive processing detail", log_output)
 
                 self.assertTrue(jobs.discard_failed(submitted.id))
 

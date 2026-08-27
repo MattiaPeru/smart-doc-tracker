@@ -1,1 +1,2 @@
 - Add the chat to the web site.
+- Sobsitute the ocr with an llm.

@@ -110,6 +110,16 @@ PDF and image files are parsed locally, then staged for review. They are stored,
 indexed, and archived only after explicit confirmation; rejection removes the staged
 copy. Uploads are limited to 25 MB.
 
+The server terminal shows local processing progress and safe error diagnostics. HTTP
+access lines are hidden by default to keep the output readable. Use `--log-level error`
+to show only errors, `--log-level debug` for additional framework diagnostics, or
+`--access-log` to also show every HTTP request:
+
+```powershell
+smart-doc-tracker-web --log-level error
+smart-doc-tracker-web --access-log
+```
+
 Dashboard edits update MongoDB immediately and queue a durable refresh of the summary
 and structured-data fragments in ChromaDB. Dashboard deletion removes MongoDB metadata
 and PDF sections plus the active ChromaDB collection's fragments, but deliberately

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from _thread import LockType
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
@@ -16,6 +17,8 @@ from ..db.database import StoredDocument
 from ..interfaces.document_repository import DocumentRepository
 from ..interfaces.document_vector_index import DocumentVectorIndex
 from ..mutation_pipeline import RepositoryFactory
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class IndexUpdateStatus(StrEnum):
@@ -85,6 +88,7 @@ class DocumentIndexJobService:
                 self._jobs.pop(job.id, None)
             self._manifest_path(job.id).unlink(missing_ok=True)
             raise
+        _LOGGER.info("Search refresh job %s queued.", job.id)
         return job
 
     def get(self, job_id: str) -> IndexUpdateJob | None:
@@ -129,6 +133,7 @@ class DocumentIndexJobService:
     def _run(self, job_id: str) -> None:
         """Refresh mutable search fragments from the latest stored document."""
         try:
+            _LOGGER.info("Search refresh job %s started.", job_id)
             self._set_status(job_id, IndexUpdateStatus.UPDATING)
             with self._operation_lock:
                 with self._repository_factory() as repository:
@@ -140,7 +145,14 @@ class DocumentIndexJobService:
                     )
             self._set_status(job_id, IndexUpdateStatus.COMPLETED)
             self._manifest_path(job_id).unlink(missing_ok=True)
-        except Exception:
+            _LOGGER.info("Search refresh job %s completed.", job_id)
+        except Exception as exc:
+            # Do not include exception text: adapters may embed document data in it.
+            _LOGGER.error(
+                "Search refresh job %s failed (%s).",
+                job_id,
+                type(exc).__name__,
+            )
             self._set_status(job_id, IndexUpdateStatus.FAILED)
 
     def _get_document(
