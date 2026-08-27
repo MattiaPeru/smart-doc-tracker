@@ -1,1 +1,0 @@
-- When there are nested lists in documents fields, make sure to display them correctly in the UI, preserving the hierarchy and indentation.
