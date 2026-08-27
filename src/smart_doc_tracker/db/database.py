@@ -59,11 +59,13 @@ class MongoDocumentRepository:
         *,
         sections_collection: DocumentCollection | None = None,
         client: MongoClient[dict[str, Any]] | None = None,
+        close_on_exit: bool = True,
     ) -> None:
         """Configure document collections and an optional owned client."""
         self._collection = collection
         self._sections_collection = sections_collection
         self._client = client
+        self._close_on_exit = close_on_exit
 
     @classmethod
     def connect(
@@ -73,8 +75,9 @@ class MongoDocumentRepository:
         database_name: str = "smart_doc_tracker",
         collection_name: str = "documents",
         timeout_ms: int = 5_000,
+        close_on_exit: bool = True,
     ) -> MongoDocumentRepository:
-        """Connect to MongoDB after enforcing a loopback-only configuration."""
+        """Connect once to MongoDB after enforcing a loopback-only configuration."""
         _validate_local_mongodb_uri(uri)
         _validate_mongodb_name(database_name, label="database_name")
         _validate_mongodb_name(collection_name, label="collection_name")
@@ -116,6 +119,7 @@ class MongoDocumentRepository:
             cast(DocumentCollection, collection),
             sections_collection=cast(DocumentCollection, sections_collection),
             client=client,
+            close_on_exit=close_on_exit,
         )
 
     def close(self) -> None:
@@ -129,7 +133,8 @@ class MongoDocumentRepository:
 
     def __exit__(self, *args: object) -> None:
         """Close the owned client when leaving the context."""
-        self.close()
+        if self._close_on_exit:
+            self.close()
 
     def insert_document(
         self,

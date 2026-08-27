@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict
 from ..db.database import StoredDocument
 from ..models.document import DocumentData
 from ..models.rag import IndexedDocumentFragment
+from .index_jobs import IndexUpdateJob
 from .jobs import UploadJob
 from .pending import PendingDocument
 
@@ -57,6 +58,43 @@ class DocumentResponse(BaseModel):
             created_at=record.created_at,
             expiration_status=status,
         )
+
+
+class DocumentUpdateResponse(DocumentResponse):
+    """Stored document plus its accepted background refresh identifier."""
+
+    index_update_id: str
+
+    @classmethod
+    def from_update(
+        cls,
+        record: StoredDocument,
+        *,
+        index_update_id: str,
+        today: date,
+        alert_days: int,
+    ) -> DocumentUpdateResponse:
+        """Create an update response after durable local queueing."""
+        response = DocumentResponse.from_record(
+            record,
+            today=today,
+            alert_days=alert_days,
+        )
+        return cls(**response.model_dump(), index_update_id=index_update_id)
+
+
+class IndexUpdateJobResponse(BaseModel):
+    """Minimal browser-visible state for one background refresh."""
+
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+    id: str
+    status: str
+
+    @classmethod
+    def from_job(cls, job: IndexUpdateJob) -> IndexUpdateJobResponse:
+        """Hide internal document and persistence metadata from the browser."""
+        return cls.model_validate(job)
 
 
 class UploadJobResponse(BaseModel):

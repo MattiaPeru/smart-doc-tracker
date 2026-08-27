@@ -88,6 +88,23 @@ button {
   font-weight: 750;
 }
 button:hover { background: var(--accent-dark); }
+button:disabled { cursor: wait; opacity: .72; }
+button.is-saving::before {
+  content: "";
+  display: inline-block;
+  width: .8em;
+  height: .8em;
+  margin-right: 8px;
+  border: 2px solid rgb(255 255 255 / 45%);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  vertical-align: -.08em;
+  animation: saving-spin .7s linear infinite;
+}
+@keyframes saving-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  button.is-saving::before { animation: none; }
+}
 button.secondary { color: var(--accent-dark); background: transparent; }
 button.secondary:hover { background: rgb(23 107 82 / 8%); }
 button.danger-button { border-color: var(--expired); background: var(--expired); }

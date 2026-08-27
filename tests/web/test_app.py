@@ -451,10 +451,18 @@ class WebApplicationTests(TestCase):
         payload["summary"] = "Updated summary"
 
         updated = self.client.put("/api/documents/soon", json=payload)
+        update_id = updated.json()["index_update_id"]
+        update: dict[str, Any] = {}
+        for _ in range(100):
+            update = self.client.get(f"/api/document-updates/{update_id}").json()
+            if update["status"] in {"completed", "failed"}:
+                break
+            time.sleep(0.01)
         deleted = self.client.delete("/api/documents/soon")
 
         self.assertEqual(updated.status_code, 200)
         self.assertEqual(updated.json()["summary"], "Updated summary")
+        self.assertEqual(update["status"], "completed")
         self.assertEqual(self.vector_index.updates[0][0], "soon")
         self.assertEqual(deleted.status_code, 204)
         self.assertEqual(self.vector_index.deletes, ["soon"])
@@ -469,6 +477,19 @@ class WebApplicationTests(TestCase):
         self.assertEqual(response.status_code, 422)
         self.assertIn("incomplete JSON container", response.json()["detail"])
         self.assertEqual(self.vector_index.updates, [])
+
+    def test_editor_shows_plain_language_save_progress(self) -> None:
+        script = self.dashboard_source()
+        stylesheet = self.client.get("/static/dashboard.css").text
+
+        self.assertIn('submitButton.textContent = "Saving..."', script)
+        self.assertIn("Search will be ready shortly.", script)
+        self.assertIn("Search is taking longer than expected.", script)
+        self.assertIn("monitorDocumentUpdate", script)
+        self.assertIn("button.is-saving::before", stylesheet)
+        self.assertNotIn("embedding", script.lower())
+        self.assertNotIn("chromadb", script.lower())
+        self.assertNotIn("mongodb", script.lower())
 
     def test_rejects_unsupported_or_empty_uploads(self) -> None:
         unsupported = self.client.post(

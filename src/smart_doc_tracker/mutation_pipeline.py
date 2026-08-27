@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from _thread import LockType
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from threading import Lock
 
 from .db.database import DocumentInsertResult, StoredDocument
 from .interfaces.document_repository import DocumentRepository
@@ -16,6 +18,15 @@ class CoordinatedMutationError(RuntimeError):
 
 
 RepositoryFactory = Callable[[], DocumentRepository]
+IndexUpdateSubmitter = Callable[[str], str]
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentUpdateResult:
+    """Stored document together with its durable local refresh job."""
+
+    record: StoredDocument
+    index_update_id: str
 
 
 @dataclass(slots=True)
@@ -24,6 +35,8 @@ class DocumentMutationPipeline:
 
     repository_factory: RepositoryFactory
     vector_index: DocumentVectorIndex
+    index_update_submitter: IndexUpdateSubmitter
+    operation_lock: LockType = field(default_factory=Lock)
 
     def confirm(
         self,
@@ -67,39 +80,37 @@ class DocumentMutationPipeline:
                 "The confirmed document was not committed to both local stores."
             ) from exc
 
-    def update(self, document_id: str, document: DocumentData) -> StoredDocument | None:
-        """Update MongoDB and ChromaDB, restoring both snapshots on failure."""
+    def update(
+        self,
+        document_id: str,
+        document: DocumentData,
+    ) -> DocumentUpdateResult | None:
+        """Store one update and durably schedule its local search refresh."""
         document.ensure_complete_dynamic_values()
         try:
-            with self.repository_factory() as repository:
-                previous = repository.get_document_by_id(document_id)
-                if previous is None:
-                    return None
-                snapshot = self.vector_index.snapshot_document(document_id)
-                updated = repository.update_document(document_id, document)
-                if updated is None:
-                    return None
-                try:
-                    self.vector_index.update_document_data(document_id, document)
-                except Exception as exc:
-                    rollback_complete = True
+            with self.operation_lock:
+                with self.repository_factory() as repository:
+                    previous = repository.get_document_by_id(document_id)
+                    if previous is None:
+                        return None
+                    updated = repository.update_document(document_id, document)
+                    if updated is None:
+                        return None
                     try:
-                        repository.update_document(document_id, previous.document)
-                    except Exception:
-                        rollback_complete = False
-                    try:
-                        self.vector_index.restore_document(snapshot)
-                    except Exception:
-                        rollback_complete = False
-                    if not rollback_complete:
+                        update_id = self.index_update_submitter(document_id)
+                    except Exception as exc:
+                        try:
+                            repository.update_document(document_id, previous.document)
+                        except Exception:
+                            raise CoordinatedMutationError(
+                                "The document update failed and automatic rollback "
+                                "was incomplete."
+                            ) from exc
                         raise CoordinatedMutationError(
-                            "The document update failed and automatic rollback was "
-                            "incomplete."
+                            "The document update was rolled back before local search "
+                            "refresh was scheduled."
                         ) from exc
-                    raise CoordinatedMutationError(
-                        "The document update was rolled back in both local stores."
-                    ) from exc
-                return updated
+                    return DocumentUpdateResult(updated, update_id)
         except CoordinatedMutationError:
             raise
         except Exception as exc:
@@ -110,25 +121,27 @@ class DocumentMutationPipeline:
     def delete(self, document_id: str) -> StoredDocument | None:
         """Delete from ChromaDB and MongoDB, restoring ChromaDB if MongoDB fails."""
         try:
-            with self.repository_factory() as repository:
-                if repository.get_document_by_id(document_id) is None:
-                    return None
-                snapshot = self.vector_index.snapshot_document(document_id)
-                try:
-                    self.vector_index.delete_document(document_id)
-                    deleted = repository.delete_document(document_id)
-                except Exception as exc:
+            with self.operation_lock:
+                with self.repository_factory() as repository:
+                    if repository.get_document_by_id(document_id) is None:
+                        return None
+                    snapshot = self.vector_index.snapshot_document(document_id)
                     try:
-                        self.vector_index.restore_document(snapshot)
-                    except Exception:
+                        self.vector_index.delete_document(document_id)
+                        deleted = repository.delete_document(document_id)
+                    except Exception as exc:
+                        try:
+                            self.vector_index.restore_document(snapshot)
+                        except Exception:
+                            raise CoordinatedMutationError(
+                                "The document deletion failed and automatic rollback "
+                                "was incomplete."
+                            ) from exc
                         raise CoordinatedMutationError(
-                            "The document deletion failed and automatic rollback was "
-                            "incomplete."
+                            "The document deletion was rolled back in both local "
+                            "stores."
                         ) from exc
-                    raise CoordinatedMutationError(
-                        "The document deletion was rolled back in both local stores."
-                    ) from exc
-                return deleted
+                    return deleted
         except CoordinatedMutationError:
             raise
         except Exception as exc:

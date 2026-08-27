@@ -120,20 +120,39 @@ class DocumentMutationPipelineTests(TestCase):
     def setUp(self) -> None:
         self.repository = FakeRepository()
         self.vector = FakeVectorIndex()
+        self.scheduled: list[str] = []
+
+        def schedule(document_id: str) -> str:
+            self.scheduled.append(document_id)
+            return "update-job"
+
         self.pipeline = DocumentMutationPipeline(
             lambda: self.repository,
             self.vector,
+            schedule,
         )
 
-    def test_rolls_back_mongo_when_vector_update_fails(self) -> None:
-        self.vector.fail_update = True
+    def test_rolls_back_mongo_when_durable_queueing_fails(self) -> None:
+        def fail(_document_id: str) -> str:
+            raise RuntimeError("Local queue failed")
+
+        self.pipeline.index_update_submitter = fail
 
         with self.assertRaises(CoordinatedMutationError):
             self.pipeline.update("doc-1", _document("Changed"))
 
         assert self.repository.record is not None
         self.assertEqual(self.repository.record.document.summary, "Original")
-        self.assertEqual(self.vector.restored, [{"ids": ["doc-1:summary"]}])
+        self.assertEqual(self.vector.restored, [])
+
+    def test_updates_storage_without_waiting_for_vector_refresh(self) -> None:
+        result = self.pipeline.update("doc-1", _document("Changed"))
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.index_update_id, "update-job")
+        self.assertEqual(self.scheduled, ["doc-1"])
+        self.assertEqual(self.vector.restored, [])
 
     def test_restores_vector_snapshot_when_mongo_delete_fails(self) -> None:
         self.repository.fail_delete = True

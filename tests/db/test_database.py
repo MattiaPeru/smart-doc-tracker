@@ -331,3 +331,25 @@ class MongoDocumentRepositoryTests(TestCase):
         )
         repository.close()
         self.assertTrue(client.closed)
+
+    def test_shared_repository_stays_open_across_request_contexts(self) -> None:
+        class FakeClient:
+            def __init__(self) -> None:
+                self.closed = False
+
+            def close(self) -> None:
+                self.closed = True
+
+        client = FakeClient()
+        repository = MongoDocumentRepository(
+            FakeCollection(),
+            client=client,  # type: ignore[arg-type]
+            close_on_exit=False,
+        )
+
+        with repository:
+            pass
+
+        self.assertFalse(client.closed)
+        repository.close()
+        self.assertTrue(client.closed)

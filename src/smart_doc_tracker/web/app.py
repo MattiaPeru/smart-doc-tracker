@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from threading import Lock
 from typing import Annotated, Any
 
 from fastapi import (
@@ -48,11 +49,14 @@ from ..interfaces.document_vector_index import DocumentVectorIndex
 from ..models.document import DocumentData
 from ..mutation_pipeline import CoordinatedMutationError, DocumentMutationPipeline
 from ..pipeline import DocumentProcessingPipeline, DocumentProcessingResult
+from .index_jobs import DocumentIndexJobService
 from .jobs import ProgressReporter, UploadJobService, UploadProcessor
 from .pending import PendingDocumentService
 from .schemas import (
     DocumentIndexedContentResponse,
     DocumentResponse,
+    DocumentUpdateResponse,
+    IndexUpdateJobResponse,
     PendingDocumentResponse,
     UploadJobResponse,
 )
@@ -84,16 +88,20 @@ class WebDependencies:
     today_provider: Callable[[], date] = date.today
     vector_index: DocumentVectorIndex | None = None
     processed_path: Path = Path("data/processed")
+    repository_closer: Callable[[], None] | None = None
 
 
 def default_web_dependencies() -> WebDependencies:
     """Compose the production dashboard from loopback-only adapters."""
-    repository_factory = MongoDocumentRepository.connect
-
     vector_index = ChromaDocumentVectorIndex(
         embedding_generator=OllamaEmbeddingClient(model="embeddinggemma"),
         collection_name=collection_name_for_embedding_model("embeddinggemma"),
     )
+    repository = MongoDocumentRepository.connect(close_on_exit=False)
+
+    def repository_factory() -> DocumentRepository:
+        """Return the application-scoped thread-safe repository."""
+        return repository
 
     def process_upload(
         path: Path,
@@ -115,6 +123,7 @@ def default_web_dependencies() -> WebDependencies:
         repository_factory,
         process_upload,
         vector_index=vector_index,
+        repository_closer=repository.close,
     )
 
 
@@ -131,10 +140,30 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
         pending_documents,
         data_path / "processing_queue",
     )
+    mutation_lock = Lock()
+    index_jobs = (
+        DocumentIndexJobService(
+            resolved.repository_factory,
+            resolved.vector_index,
+            data_path / "index_update_queue",
+            mutation_lock,
+        )
+        if resolved.vector_index is not None
+        else None
+    )
+
+    def submit_index_update(document_id: str) -> str:
+        """Durably schedule a local search refresh."""
+        if index_jobs is None:
+            raise RuntimeError("The local index update queue is unavailable.")
+        return index_jobs.submit(document_id).id
+
     mutations = (
         DocumentMutationPipeline(
             resolved.repository_factory,
             resolved.vector_index,
+            submit_index_update,
+            mutation_lock,
         )
         if resolved.vector_index is not None
         else None
@@ -142,10 +171,14 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        """Close the bounded worker after all accepted uploads finish."""
+        """Close bounded workers and shared local connections cleanly."""
         yield
         jobs.close()
+        if index_jobs is not None:
+            index_jobs.close()
         pending_documents.close()
+        if resolved.repository_closer is not None:
+            resolved.repository_closer()
 
     app = FastAPI(
         title="Smart Doc Tracker",
@@ -268,12 +301,12 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
             fragments,
         )
 
-    @app.put("/api/documents/{document_id}", response_model=DocumentResponse)
+    @app.put("/api/documents/{document_id}", response_model=DocumentUpdateResponse)
     def update_document(
         document_id: str,
         document: DocumentData,
-    ) -> DocumentResponse:
-        """Update one document consistently in MongoDB and ChromaDB."""
+    ) -> DocumentUpdateResponse:
+        """Store one document update and queue its local search refresh."""
         service = _require_mutation_service(mutations)
         try:
             updated = service.update(document_id, document)
@@ -283,11 +316,23 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         if updated is None:
             raise HTTPException(status_code=404, detail="Document not found.")
-        return DocumentResponse.from_record(
-            updated,
+        return DocumentUpdateResponse.from_update(
+            updated.record,
+            index_update_id=updated.index_update_id,
             today=resolved.today_provider(),
             alert_days=30,
         )
+
+    @app.get(
+        "/api/document-updates/{update_id}",
+        response_model=IndexUpdateJobResponse,
+    )
+    def get_document_update(update_id: str) -> IndexUpdateJobResponse:
+        """Return simple progress for one accepted background refresh."""
+        job = _require_index_jobs(index_jobs).get(update_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Update not found.")
+        return IndexUpdateJobResponse.from_job(job)
 
     @app.delete("/api/documents/{document_id}", status_code=204)
     def delete_document(document_id: str) -> None:
@@ -441,6 +486,18 @@ def _require_mutation_service(
         raise HTTPException(
             status_code=503,
             detail="The local vector database is unavailable.",
+        )
+    return service
+
+
+def _require_index_jobs(
+    service: DocumentIndexJobService | None,
+) -> DocumentIndexJobService:
+    """Return the configured local refresh queue or a safe service error."""
+    if service is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Document updates are temporarily unavailable.",
         )
     return service
 

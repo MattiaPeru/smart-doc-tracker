@@ -196,6 +196,12 @@ function showEditor(item, isPending) {
 async function saveEditor(event, identifier, isPending) {
   event.preventDefault();
   const form = event.currentTarget;
+  const submitButton = form.querySelector('button[type="submit"]');
+  const originalButtonText = submitButton.textContent;
+  submitButton.disabled = true;
+  submitButton.classList.add("is-saving");
+  submitButton.textContent = "Saving...";
+  form.setAttribute("aria-busy", "true");
   clearMessage();
   try {
     const endpoint = isPending ? `/api/pending-documents/${identifier}/confirm` : `/api/documents/${identifier}`;
@@ -206,16 +212,51 @@ async function saveEditor(event, identifier, isPending) {
     if (!response.ok) {
       throw requestError(response, "We couldn't save the document. Check the information and try again.");
     }
-    await response.json();
+    const saved = await response.json();
     reviewDialog.close();
-    showMessage(isPending ? "Document added successfully." : "Changes saved successfully.");
-    await Promise.all([loadDocuments(), loadPendingDocuments()]);
+    if (isPending) {
+      showMessage("Document added successfully.");
+    } else {
+      showMessage("Changes saved. Search will be ready shortly.");
+      monitorDocumentUpdate(saved.index_update_id);
+    }
+    Promise.all([loadDocuments(), loadPendingDocuments()]).catch(() => {
+      showMessage("Changes are saved. Refresh the page to see the latest information.");
+    });
   } catch (error) {
     const editorMessage = form.querySelector("#editor-message");
     editorMessage.textContent = userMessage(error, "We couldn't save the document. Please try again.");
     editorMessage.hidden = false;
     editorMessage.scrollIntoView({ block: "nearest" });
+  } finally {
+    submitButton.disabled = false;
+    submitButton.classList.remove("is-saving");
+    submitButton.textContent = originalButtonText;
+    form.removeAttribute("aria-busy");
   }
+}
+
+async function monitorDocumentUpdate(updateId) {
+  if (!updateId) return;
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    try {
+      const response = await fetch(`/api/document-updates/${updateId}`);
+      if (!response.ok) return;
+      const update = await response.json();
+      if (update.status === "completed") {
+        showMessage("Changes saved successfully.");
+        return;
+      }
+      if (update.status === "failed") {
+        showMessage("Changes are saved. Search is taking longer than expected.");
+        return;
+      }
+    } catch (_error) {
+      return;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 500));
+  }
+  showMessage("Changes are saved. Search is taking longer than expected.");
 }
 
 async function discardFailedJob(jobId) {
@@ -354,5 +395,3 @@ window.setInterval(() => {
   loadProcessingQueue();
   loadPendingDocuments();
 }, 2000);
-
-
