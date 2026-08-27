@@ -199,7 +199,12 @@ class WebApplicationTests(TestCase):
                 processed_path=Path(self.temporary_directory.name) / "processed",
             )
         )
-        self.client_context = TestClient(app)
+        self.app = app
+        self.client_context = TestClient(
+            app,
+            base_url="http://127.0.0.1:8080",
+            headers={"X-Smart-Doc-CSRF": app.state.csrf_token},
+        )
         self.client = self.client_context.__enter__()
 
     def tearDown(self) -> None:
@@ -217,6 +222,42 @@ class WebApplicationTests(TestCase):
             [item["expiration_status"] for item in response.json()],
             ["expired", "soon", "valid", "none"],
         )
+
+    def test_rejects_external_hosts_cross_origin_writes_and_missing_csrf(self) -> None:
+        valid_payload = self.records[0].document.model_dump(mode="json")
+        external_host = self.client.get(
+            "/api/documents",
+            headers={"Host": "attacker.example"},
+        )
+        external_origin = self.client.put(
+            "/api/documents/expired",
+            json=valid_payload,
+            headers={"Origin": "https://attacker.example"},
+        )
+        without_csrf = TestClient(
+            self.app,
+            base_url="http://127.0.0.1:8080",
+        ).put("/api/documents/expired", json=valid_payload)
+
+        self.assertEqual(external_host.status_code, 400)
+        self.assertEqual(external_origin.status_code, 403)
+        self.assertEqual(without_csrf.status_code, 403)
+        self.assertEqual(self.records[0].document.summary, "A local insurance policy")
+
+    def test_serves_csrf_proof_and_restrictive_browser_headers(self) -> None:
+        response = self.client.get("/")
+
+        self.assertIn('name="csrf-token"', response.text)
+        self.assertIn("script-src 'self'", response.headers["content-security-policy"])
+        self.assertIn(
+            "frame-ancestors 'none'",
+            response.headers["content-security-policy"],
+        )
+        self.assertEqual(response.headers["x-frame-options"], "DENY")
+        self.assertEqual(response.headers["x-content-type-options"], "nosniff")
+        self.assertEqual(response.headers["referrer-policy"], "no-referrer")
+        self.assertEqual(self.client.get("/docs").status_code, 404)
+        self.assertEqual(self.client.get("/openapi.json").status_code, 404)
 
     def test_dashboard_messages_are_visible_and_dismissible(self) -> None:
         script = self.client.get("/static/js/messages.js")
@@ -247,11 +288,19 @@ class WebApplicationTests(TestCase):
         dashboard = self.client.get("/")
         script = self.client.get("/static/js/dashboard.js")
 
-        self.assertNotIn("/static/dashboard.css", dashboard.text)
+        self.assertIn('href="/static/dashboard.css"', dashboard.text)
         self.assertIn('type="module" src="/static/js/dashboard.js"', dashboard.text)
         self.assertIn('from "./attribute-editor.js"', script.text)
         self.assertEqual(dashboard.headers["cache-control"], "no-store, max-age=0")
         self.assertEqual(script.headers["cache-control"], "no-store, max-age=0")
+
+    def test_dashboard_sends_csrf_proof_for_every_write(self) -> None:
+        script = self.client.get("/static/js/dashboard.js").text
+
+        self.assertIn('meta[name="csrf-token"]', script)
+        self.assertIn('headers.set("X-Smart-Doc-CSRF", csrfToken)', script)
+        self.assertIn("return fetch(resource, { ...options, headers })", script)
+        self.assertNotIn("await fetch(", script)
 
     def test_dashboard_exposes_a_separate_processing_queue(self) -> None:
         dashboard = self.client.get("/")

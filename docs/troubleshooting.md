@@ -151,9 +151,10 @@ minimum metadata needed for recovery. A failed upload remains in the queue until
 is dismissed in the dashboard. If an index refresh remains failed, the MongoDB edit
 is authoritative but semantic results can be stale; there is no bulk reindex command.
 
-The dashboard is designed only for same-host loopback access. It does not currently
-provide authentication, CSRF tokens, or a hardened multi-user deployment profile.
-Do not expose it to a LAN or reverse proxy.
+The dashboard is designed only for same-host loopback access. It validates loopback
+hosts and browser origins, requires CSRF proof for writes, and sends restrictive
+browser security headers, but it does not provide authentication or a hardened
+multi-user deployment profile. Do not expose it to a LAN or reverse proxy.
 
 ## Requesting support
 

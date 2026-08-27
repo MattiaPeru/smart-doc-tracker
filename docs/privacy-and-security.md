@@ -83,21 +83,20 @@ cache. Decoded-content or magic-byte validation is not currently implemented.
 
 The launcher accepts only `127.0.0.1` or `::1` and runs one Uvicorn worker. A
 browser-facing loopback service is still exposed to malicious web pages, local
-malware, and other local users. The current dashboard does not implement
-authentication, CSRF tokens, explicit origin/host middleware, a restrictive Content
-Security Policy, or disabled OpenAPI documentation. It must not be exposed to a LAN.
+malware, and other local users. The dashboard rejects non-loopback `Host` values and
+cross-origin browser writes, requires a process-random CSRF token for every
+state-changing request, serves a restrictive Content Security Policy and browser
+security headers, and disables the OpenAPI and documentation routes. It must still
+not be exposed to a LAN.
 
 Before any broader or multi-user deployment, add and verify:
 
-- strict allowed hosts and origins;
-- CSRF defenses for state-changing browser requests;
 - secure, HTTP-only, same-site cookies if sessions are introduced;
-- restrictive Content Security Policy and other browser security headers;
-- validation and authorization for every document identifier;
+- authentication, authorization, and ownership checks for every document identifier;
 - no document data in URLs, analytics, access logs, browser console logs, or caches;
 - bounded query concurrency in addition to the current bounded upload worker;
 - idempotent deletion and explicit archived-file policy;
-- disabled OpenAPI documentation in production if it reveals unnecessary surface.
+- TLS termination and a reviewed reverse-proxy configuration.
 
 Authentication is optional only for a strictly single-user loopback deployment with
 a documented host trust assumption. Any LAN exposure changes the threat model and

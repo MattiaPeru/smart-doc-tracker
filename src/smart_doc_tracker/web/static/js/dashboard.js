@@ -9,6 +9,16 @@ const pendingGrid = document.querySelector("#pending-grid");
 const filterLabel = document.querySelector("#filter-label");
 const dialog = document.querySelector("#document-dialog");
 const reviewDialog = document.querySelector("#review-dialog");
+const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
+
+function apiFetch(resource, options = {}) {
+  const method = (options.method || "GET").toUpperCase();
+  const headers = new Headers(options.headers);
+  if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+    headers.set("X-Smart-Doc-CSRF", csrfToken);
+  }
+  return fetch(resource, { ...options, headers });
+}
 
 
 function expirationLabel(document) {
@@ -137,7 +147,7 @@ async function loadIndexedContent(documentId, button, container) {
   button.textContent = "Loading...";
   container.textContent = "Loading document content...";
   try {
-    const response = await fetch(`/api/documents/${documentId}/indexed-content`);
+    const response = await apiFetch(`/api/documents/${documentId}/indexed-content`);
     if (!response.ok) {
       throw requestError(response, "We couldn't load this document's content. Please try again.");
     }
@@ -205,7 +215,7 @@ async function saveEditor(event, identifier, isPending) {
   clearMessage();
   try {
     const endpoint = isPending ? `/api/pending-documents/${identifier}/confirm` : `/api/documents/${identifier}`;
-    const response = await fetch(endpoint, {
+    const response = await apiFetch(endpoint, {
       method: isPending ? "POST" : "PUT", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(editorPayload(form)),
     });
@@ -240,7 +250,7 @@ async function monitorDocumentUpdate(updateId) {
   if (!updateId) return;
   for (let attempt = 0; attempt < 120; attempt += 1) {
     try {
-      const response = await fetch(`/api/document-updates/${updateId}`);
+      const response = await apiFetch(`/api/document-updates/${updateId}`);
       if (!response.ok) return;
       const update = await response.json();
       if (update.status === "completed") {
@@ -262,7 +272,7 @@ async function monitorDocumentUpdate(updateId) {
 async function discardFailedJob(jobId) {
   if (!window.confirm("Remove this upload from the list?")) return;
   try {
-    const response = await fetch(`/api/jobs/${jobId}`, { method: "DELETE" });
+    const response = await apiFetch(`/api/jobs/${jobId}`, { method: "DELETE" });
     if (!response.ok) throw requestError(response, "We couldn't remove this upload. Please try again.");
     showMessage("Upload removed.");
     await loadProcessingQueue();
@@ -272,7 +282,7 @@ async function discardFailedJob(jobId) {
 async function deleteDocument(documentId) {
   if (!window.confirm("Delete this document? This action cannot be undone.")) return;
   try {
-    const response = await fetch(`/api/documents/${documentId}`, { method: "DELETE" });
+    const response = await apiFetch(`/api/documents/${documentId}`, { method: "DELETE" });
     if (!response.ok) throw requestError(response, "We couldn't delete this document. Please try again.");
     dialog.close();
     showMessage("Document deleted successfully.");
@@ -283,7 +293,7 @@ async function deleteDocument(documentId) {
 async function rejectPending(pendingId) {
   if (!window.confirm("Discard this document? This action cannot be undone.")) return;
   try {
-    const response = await fetch(`/api/pending-documents/${pendingId}`, { method: "DELETE" });
+    const response = await apiFetch(`/api/pending-documents/${pendingId}`, { method: "DELETE" });
     if (!response.ok) {
       throw requestError(response, "We couldn't discard this document. Please try again.");
     }
@@ -297,7 +307,7 @@ async function rejectPending(pendingId) {
 
 async function loadDocuments(parameters = new URLSearchParams()) {
   try {
-    const response = await fetch(`/api/documents?${parameters}`);
+    const response = await apiFetch(`/api/documents?${parameters}`);
     if (!response.ok) throw requestError(response, "We couldn't load your documents. Please try again.");
     const payload = await response.json();
     renderDocuments(payload);
@@ -306,7 +316,7 @@ async function loadDocuments(parameters = new URLSearchParams()) {
 
 async function loadPendingDocuments() {
   try {
-    const response = await fetch("/api/pending-documents");
+    const response = await apiFetch("/api/pending-documents");
     if (!response.ok) throw requestError(response, "We couldn't load documents awaiting review. Please try again.");
     const payload = await response.json();
     renderPending(payload);
@@ -315,7 +325,7 @@ async function loadPendingDocuments() {
 
 async function loadProcessingQueue() {
   try {
-    const response = await fetch("/api/jobs");
+    const response = await apiFetch("/api/jobs");
     if (!response.ok) throw requestError(response, "We couldn't load documents being processed. Please try again.");
     const payload = await response.json();
     renderQueue(payload);
@@ -355,7 +365,7 @@ document.querySelector("#upload-form").addEventListener("submit", async (event) 
   const form = event.currentTarget;
   clearMessage();
   try {
-    const response = await fetch("/api/uploads", { method: "POST", body: new FormData(form) });
+    const response = await apiFetch("/api/uploads", { method: "POST", body: new FormData(form) });
     if (!response.ok) {
       throw requestError(response, "We couldn't upload this document. Choose a non-empty PDF or image and try again.");
     }
@@ -374,7 +384,7 @@ document.querySelector("#upload-form").addEventListener("submit", async (event) 
 
 async function monitorJob(jobId) {
   while (true) {
-    const response = await fetch(`/api/jobs/${jobId}`);
+    const response = await apiFetch(`/api/jobs/${jobId}`);
     if (!response.ok) throw requestError(response, "We couldn't check this document's progress. Please try again.");
     const job = await response.json();
     await loadProcessingQueue();

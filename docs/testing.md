@@ -85,14 +85,16 @@ The current offline web tests cover:
   rejection, and failed-job cleanup;
 - browser disconnection without job loss;
 - database filters that cannot inject arbitrary MongoDB operators;
+- rejected external hosts, cross-origin writes, and missing CSRF proof;
+- restrictive browser headers and disabled API documentation routes;
 - durable metadata-only index-refresh manifests;
 - metadata refresh after edits and coordinated MongoDB/Chroma deletion;
 - browser rendering and on-demand indexed-content display without embeddings.
 
-Still-required coverage before a hardened or broader deployment includes decoded-file
-signature validation, CSRF and explicit origin/host controls, restrictive security
-headers, cancellation, concurrent mutation races, all-collection deletion, archived
-file policy, and partial-failure reconciliation.
+Still-required coverage before a broader deployment includes decoded-file signature
+validation, authentication and authorization, cancellation, concurrent mutation
+races, all-collection deletion, archived file policy, and partial-failure
+reconciliation.
 
 Use FastAPI's in-process test client or an equivalent ASGI transport. Override every
 infrastructure dependency with a fake so HTTP tests remain deterministic and offline.

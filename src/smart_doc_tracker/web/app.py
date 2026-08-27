@@ -4,14 +4,16 @@ import argparse
 import json
 import os
 import re
+import secrets
 import tempfile
-from collections.abc import AsyncIterator, Callable, Iterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from threading import Lock
 from typing import Annotated, Any
+from urllib.parse import urlsplit
 
 from fastapi import (
     Depends,
@@ -67,6 +69,22 @@ _SUPPORTED_EXTENSIONS = SUPPORTED_IMAGE_EXTENSIONS | {".pdf"}
 _LANGUAGE_CODE = re.compile(r"^[A-Za-z][A-Za-z0-9_+-]{0,31}$")
 _MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 _UPLOAD_CHUNK_BYTES = 1024 * 1024
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+_UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+_CSRF_HEADER = "X-Smart-Doc-CSRF"
+_CONTENT_SECURITY_POLICY = "; ".join(
+    (
+        "default-src 'self'",
+        "base-uri 'none'",
+        "connect-src 'self'",
+        "form-action 'self'",
+        "frame-ancestors 'none'",
+        "img-src 'self' data:",
+        "object-src 'none'",
+        "script-src 'self'",
+        "style-src 'self'",
+    )
+)
 
 
 class LocalStaticFiles(StaticFiles):
@@ -184,7 +202,12 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
         title="Smart Doc Tracker",
         version="0.1.0",
         lifespan=lifespan,
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
     )
+    csrf_token = secrets.token_urlsafe(32)
+    app.state.csrf_token = csrf_token
     app.state.upload_jobs = jobs
     templates = Jinja2Templates(directory=str(_WEB_ROOT / "templates"))
     app.mount(
@@ -192,6 +215,24 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
         LocalStaticFiles(directory=str(_WEB_ROOT / "static")),
         name="static",
     )
+
+    @app.middleware("http")
+    async def enforce_local_web_boundary(
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        """Reject external authorities, cross-origin writes, and missing CSRF proof."""
+        host = request.headers.get("host", "")
+        if _normalized_authority(host) is None:
+            return _secure_response(Response(status_code=400))
+        origin = request.headers.get("origin")
+        if origin is not None and not _same_loopback_origin(origin, host):
+            return _secure_response(Response(status_code=403))
+        if request.method in _UNSAFE_METHODS:
+            supplied_token = request.headers.get(_CSRF_HEADER, "")
+            if not secrets.compare_digest(supplied_token, csrf_token):
+                return _secure_response(Response(status_code=403))
+        return _secure_response(await call_next(request))
 
     def repository() -> Iterator[DocumentRepository]:
         """Open and close one local repository for a request."""
@@ -214,10 +255,8 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
             name="dashboard.html",
             context={
                 "alert_days": 30,
+                "csrf_token": csrf_token,
                 "max_upload_mb": 25,
-                "dashboard_style": (_WEB_ROOT / "static" / "dashboard.css").read_text(
-                    encoding="utf-8"
-                ),
             },
         )
         response.headers["Cache-Control"] = "no-store, max-age=0"
@@ -476,6 +515,52 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
             )
 
     return app
+
+
+def _normalized_authority(value: str) -> tuple[str, int] | None:
+    """Parse an HTTP authority and accept only an exact loopback hostname."""
+    if not value or any(character in value for character in "/?#@"):
+        return None
+    try:
+        parsed = urlsplit(f"//{value}")
+        port = parsed.port or 80
+    except ValueError:
+        return None
+    hostname = parsed.hostname.lower() if parsed.hostname is not None else None
+    if hostname not in _LOOPBACK_HOSTS:
+        return None
+    return hostname, port
+
+
+def _same_loopback_origin(origin: str, host: str) -> bool:
+    """Require browser requests to originate from the exact served authority."""
+    try:
+        parsed = urlsplit(origin)
+        origin_authority = _normalized_authority(parsed.netloc)
+    except ValueError:
+        return False
+    return (
+        parsed.scheme == "http"
+        and parsed.path == ""
+        and parsed.query == ""
+        and parsed.fragment == ""
+        and origin_authority is not None
+        and origin_authority == _normalized_authority(host)
+    )
+
+
+def _secure_response(response: Response) -> Response:
+    """Apply restrictive browser policies to every local HTTP response."""
+    response.headers["Content-Security-Policy"] = _CONTENT_SECURITY_POLICY
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+    response.headers["Permissions-Policy"] = (
+        "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
+    )
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    return response
 
 
 def _require_mutation_service(
