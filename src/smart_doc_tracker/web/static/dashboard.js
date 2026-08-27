@@ -6,6 +6,25 @@ const filterLabel = document.querySelector("#filter-label");
 const dialog = document.querySelector("#document-dialog");
 const reviewDialog = document.querySelector("#review-dialog");
 
+class UserFacingError extends Error {}
+
+function requestError(response, fallback) {
+  if (response.status === 413) {
+    return new UserFacingError("This file is too large. Choose a file smaller than 25 MB.");
+  }
+  if (response.status === 415) {
+    return new UserFacingError("This file type is not supported. Choose a PDF or image.");
+  }
+  if (response.status >= 500) {
+    return new UserFacingError("Something went wrong. Please try again in a moment.");
+  }
+  return new UserFacingError(fallback);
+}
+
+function userMessage(error, fallback) {
+  return error instanceof UserFacingError ? error.message : fallback;
+}
+
 function showMessage(text, isError = false) {
   message.textContent = text;
   message.classList.toggle("error", isError);
@@ -86,9 +105,9 @@ function renderPending(items) {
 function processingLabel(status) {
   const labels = {
     queued: "Waiting for processing",
-    extracting: "OCR / text extraction",
-    parsing: "Local LLM analysis",
-    failed: "Processing failed",
+    extracting: "Reading document",
+    parsing: "Organizing information",
+    failed: "We couldn't process this document",
   };
   return labels[status] || status.replaceAll("_", " ");
 }
@@ -133,7 +152,7 @@ function showDetail(item) {
     <section class="indexed-content-section">
       <div class="attributes-heading"><h3>Complete indexed content</h3>
       <button id="load-indexed-content" class="secondary compact" type="button">Load content</button></div>
-      <p class="sensitive-hint">Loads every summary, structured-data, and raw-text fragment stored locally in ChromaDB.</p>
+      <p class="sensitive-hint">Shows all the content saved for this document.</p>
       <div id="indexed-content" aria-live="polite"></div>
     </section>
     <div class="actions dialog-actions"><button id="edit-document" type="button">Edit</button>
@@ -153,11 +172,13 @@ function showDetail(item) {
 async function loadIndexedContent(documentId, button, container) {
   button.disabled = true;
   button.textContent = "Loading...";
-  container.textContent = "Reading local index...";
+  container.textContent = "Loading document content...";
   try {
     const response = await fetch(`/api/documents/${documentId}/indexed-content`);
+    if (!response.ok) {
+      throw requestError(response, "We couldn't load this document's content. Please try again.");
+    }
     const payload = await response.json();
-    if (!response.ok) throw new Error(apiError(payload, "Indexed content could not be loaded."));
     container.replaceChildren();
     payload.fragments.forEach((fragment) => {
       const article = document.createElement("article");
@@ -172,7 +193,7 @@ async function loadIndexedContent(documentId, button, container) {
     if (!payload.fragments.length) container.textContent = "No indexed content is available for this document.";
     button.textContent = "Reload content";
   } catch (error) {
-    container.textContent = error.message;
+    container.textContent = userMessage(error, "We couldn't load this document's content. Please try again.");
     button.textContent = "Try again";
   } finally {
     button.disabled = false;
@@ -671,7 +692,7 @@ function readScalarValue(node) {
 function readScalarControl(input, valueType) {
   if (valueType === "boolean") return input.value === "true";
   if (valueType === "number") {
-    if (input.value === "") throw new Error("Numeric fields cannot be empty.");
+    if (input.value === "") throw new UserFacingError("Enter a number or remove this field.");
     return Number(input.value);
   }
   if (valueType === "null" && input.value === "") return null;
@@ -694,7 +715,7 @@ function readNodeValue(node) {
       const itemField = fieldInput.value.trim();
       if (!itemField) {
         fieldInput.focus();
-        throw new Error("Every field must have a name.");
+        throw new UserFacingError("Give every field a name before saving.");
       }
       row.querySelectorAll(".compact-list-item").forEach((item, itemIndex) => {
         const originalIndex = item.dataset.originalIndex;
@@ -725,7 +746,7 @@ function readNodeValue(node) {
       const type = keyInput.value.trim();
       if (!type) {
         keyInput.focus();
-        throw new Error("Every contact field must have a name.");
+        throw new UserFacingError("Give every contact field a name before saving.");
       }
       return { type, value: readNodeValue(child) };
     });
@@ -736,7 +757,7 @@ function readNodeValue(node) {
     const key = keyInput.value.trim();
     if (!key) {
       keyInput.focus();
-      throw new Error("Every field must have a name.");
+      throw new UserFacingError("Give every field a name before saving.");
     }
     result[key] = readNodeValue(child);
   });
@@ -752,7 +773,7 @@ function editorPayload(form) {
     const key = keyInput.value.trim();
     if (!key) {
       keyInput.focus();
-      throw new Error("Every field must have a name.");
+      throw new UserFacingError("Give every field a name before saving.");
     }
     extractedData[key] = readNodeValue(node);
   });
@@ -761,11 +782,6 @@ function editorPayload(form) {
     issue_date: data.get("issue_date") || null, expiry_date: data.get("expiry_date") || null,
     extracted_data: extractedData,
   };
-}
-
-function apiError(payload, fallback) {
-  if (Array.isArray(payload.detail)) return payload.detail.map((item) => item.msg).join("; ");
-  return payload.detail || fallback;
 }
 
 async function saveEditor(event, identifier, isPending) {
@@ -778,77 +794,82 @@ async function saveEditor(event, identifier, isPending) {
       method: isPending ? "POST" : "PUT", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(editorPayload(form)),
     });
-    const payload = await response.json();
-    if (!response.ok) throw new Error(apiError(payload, "The document could not be saved."));
+    if (!response.ok) {
+      throw requestError(response, "We couldn't save the document. Check the information and try again.");
+    }
+    await response.json();
     reviewDialog.close();
-    showMessage(isPending ? "Document confirmed and stored." : "Document updated in both local stores.");
+    showMessage(isPending ? "Document added successfully." : "Changes saved successfully.");
     await Promise.all([loadDocuments(), loadPendingDocuments()]);
   } catch (error) {
     const editorMessage = form.querySelector("#editor-message");
-    editorMessage.textContent = error.message;
+    editorMessage.textContent = userMessage(error, "We couldn't save the document. Please try again.");
     editorMessage.hidden = false;
     editorMessage.scrollIntoView({ block: "nearest" });
   }
 }
 
 async function discardFailedJob(jobId) {
-  if (!window.confirm("Remove this failed upload and its local queued file?")) return;
+  if (!window.confirm("Remove this upload from the list?")) return;
   try {
     const response = await fetch(`/api/jobs/${jobId}`, { method: "DELETE" });
-    if (!response.ok) throw new Error(apiError(await response.json(), "The failed upload could not be removed."));
-    showMessage("Failed upload removed.");
+    if (!response.ok) throw requestError(response, "We couldn't remove this upload. Please try again.");
+    showMessage("Upload removed.");
     await loadProcessingQueue();
-  } catch (error) { showMessage(error.message, true); }
+  } catch (error) { showMessage(userMessage(error, "We couldn't remove this upload. Please try again."), true); }
 }
 
 async function deleteDocument(documentId) {
-  if (!window.confirm("Delete this document from MongoDB and ChromaDB?")) return;
+  if (!window.confirm("Delete this document? This action cannot be undone.")) return;
   try {
     const response = await fetch(`/api/documents/${documentId}`, { method: "DELETE" });
-    if (!response.ok) throw new Error(apiError(await response.json(), "The document could not be deleted."));
+    if (!response.ok) throw requestError(response, "We couldn't delete this document. Please try again.");
     dialog.close();
-    showMessage("Document deleted from both local stores.");
+    showMessage("Document deleted successfully.");
     await loadDocuments();
-  } catch (error) { showMessage(error.message, true); }
+  } catch (error) { showMessage(userMessage(error, "We couldn't delete this document. Please try again."), true); }
 }
 
 async function rejectPending(pendingId) {
-  if (!window.confirm("Reject this upload and remove its temporary local file?")) return;
-  const response = await fetch(`/api/pending-documents/${pendingId}`, { method: "DELETE" });
-  if (!response.ok) {
-    showMessage(apiError(await response.json(), "The pending document could not be rejected."), true);
-    return;
+  if (!window.confirm("Discard this document? This action cannot be undone.")) return;
+  try {
+    const response = await fetch(`/api/pending-documents/${pendingId}`, { method: "DELETE" });
+    if (!response.ok) {
+      throw requestError(response, "We couldn't discard this document. Please try again.");
+    }
+    reviewDialog.close();
+    showMessage("Document discarded.");
+    await loadPendingDocuments();
+  } catch (error) {
+    showMessage(userMessage(error, "We couldn't discard this document. Please try again."), true);
   }
-  reviewDialog.close();
-  showMessage("Pending document rejected.");
-  await loadPendingDocuments();
 }
 
 async function loadDocuments(parameters = new URLSearchParams()) {
   try {
     const response = await fetch(`/api/documents?${parameters}`);
+    if (!response.ok) throw requestError(response, "We couldn't load your documents. Please try again.");
     const payload = await response.json();
-    if (!response.ok) throw new Error(apiError(payload, "Documents could not be loaded."));
     renderDocuments(payload);
-  } catch (error) { showMessage(error.message, true); }
+  } catch (error) { showMessage(userMessage(error, "We couldn't load your documents. Please try again."), true); }
 }
 
 async function loadPendingDocuments() {
   try {
     const response = await fetch("/api/pending-documents");
+    if (!response.ok) throw requestError(response, "We couldn't load documents awaiting review. Please try again.");
     const payload = await response.json();
-    if (!response.ok) throw new Error(apiError(payload, "Pending documents could not be loaded."));
     renderPending(payload);
-  } catch (error) { showMessage(error.message, true); }
+  } catch (error) { showMessage(userMessage(error, "We couldn't load documents awaiting review. Please try again."), true); }
 }
 
 async function loadProcessingQueue() {
   try {
     const response = await fetch("/api/jobs");
+    if (!response.ok) throw requestError(response, "We couldn't load documents being processed. Please try again.");
     const payload = await response.json();
-    if (!response.ok) throw new Error(apiError(payload, "The processing queue could not be loaded."));
     renderQueue(payload);
-  } catch (error) { showMessage(error.message, true); }
+  } catch (error) { showMessage(userMessage(error, "We couldn't load documents being processed. Please try again."), true); }
 }
 
 function selectView(view) {
@@ -885,30 +906,36 @@ document.querySelector("#upload-form").addEventListener("submit", async (event) 
   clearMessage();
   try {
     const response = await fetch("/api/uploads", { method: "POST", body: new FormData(form) });
+    if (!response.ok) {
+      throw requestError(response, "We couldn't upload this document. Choose a non-empty PDF or image and try again.");
+    }
     const job = await response.json();
-    if (!response.ok) throw new Error(apiError(job, "Upload failed."));
     form.reset();
     document.querySelector("#language").value = "eng";
     await loadProcessingQueue();
     selectView("queue");
-    monitorJob(job.id).catch((error) => showMessage(error.message, true));
+    monitorJob(job.id).catch((error) => showMessage(
+      userMessage(error, "We couldn't process this document. Please try again."), true,
+    ));
   } catch (error) {
-    showMessage(error.message, true);
+    showMessage(userMessage(error, "We couldn't upload this document. Please try again."), true);
   }
 });
 
 async function monitorJob(jobId) {
   while (true) {
     const response = await fetch(`/api/jobs/${jobId}`);
+    if (!response.ok) throw requestError(response, "We couldn't check this document's progress. Please try again.");
     const job = await response.json();
-    if (!response.ok) throw new Error(apiError(job, "Job status is unavailable."));
     await loadProcessingQueue();
     if (job.status === "awaiting_confirmation") {
       await loadPendingDocuments();
       selectView("pending");
       return;
     }
-    if (job.status === "failed") throw new Error(job.error);
+    if (job.status === "failed") {
+      throw new UserFacingError("We couldn't process this document. Check the file and try again.");
+    }
     await new Promise((resolve) => window.setTimeout(resolve, 800));
   }
 }

@@ -215,6 +215,20 @@ class WebApplicationTests(TestCase):
         self.assertIn("position: fixed", stylesheet.text)
         self.assertIn("z-index: 1000", stylesheet.text)
 
+    def test_dashboard_uses_simple_messages_without_storage_details(self) -> None:
+        script = self.client.get("/static/dashboard.js").text
+
+        self.assertIn("Document added successfully.", script)
+        self.assertIn("Changes saved successfully.", script)
+        self.assertIn("Document deleted successfully.", script)
+        self.assertIn("This file type is not supported. Choose a PDF or image.", script)
+        self.assertIn("Something went wrong. Please try again in a moment.", script)
+        self.assertNotIn("payload.detail", script)
+        self.assertNotIn("updated in both local stores", script)
+        self.assertNotIn("deleted from both local stores", script)
+        self.assertNotIn("Delete this document from MongoDB and ChromaDB", script)
+        self.assertNotIn("job.error", script)
+
     def test_dashboard_inlines_current_assets_to_avoid_stale_cache(self) -> None:
         dashboard = self.client.get("/")
         script = self.client.get("/static/dashboard.js")
@@ -235,8 +249,8 @@ class WebApplicationTests(TestCase):
         self.assertIn('id="queue-tab"', dashboard.text)
         self.assertIn('id="queue-panel"', dashboard.text)
         self.assertNotIn('id="job-status"', dashboard.text)
-        self.assertIn("OCR / text extraction", script.text)
-        self.assertIn("Local LLM analysis", script.text)
+        self.assertIn("Reading document", script.text)
+        self.assertIn("Organizing information", script.text)
         self.assertIn("discardFailedJob", script.text)
         self.assertIn('method: "DELETE"', script.text)
 
@@ -245,7 +259,7 @@ class WebApplicationTests(TestCase):
         stylesheet = self.client.get("/static/dashboard.css")
 
         self.assertIn('id="editor-message"', script.text)
-        self.assertIn("Every field must have a name", script.text)
+        self.assertIn("Give every field a name before saving", script.text)
         self.assertIn("editorMessage.hidden = false", script.text)
         self.assertIn(".editor-message", stylesheet.text)
 
