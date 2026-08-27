@@ -25,6 +25,8 @@ from fastapi import (
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.responses import Response
+from starlette.types import Scope
 
 from ..core.file_hash import FileHashingError, calculate_file_sha256
 from ..core.ocr import SUPPORTED_IMAGE_EXTENSIONS, TesseractOCR
@@ -61,6 +63,16 @@ _SUPPORTED_EXTENSIONS = SUPPORTED_IMAGE_EXTENSIONS | {".pdf"}
 _LANGUAGE_CODE = re.compile(r"^[A-Za-z][A-Za-z0-9_+-]{0,31}$")
 _MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 _UPLOAD_CHUNK_BYTES = 1024 * 1024
+
+
+class LocalStaticFiles(StaticFiles):
+    """Serve local dashboard assets without retaining stale browser copies."""
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        """Return one static asset with browser persistence disabled."""
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        return response
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,7 +156,7 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
     templates = Jinja2Templates(directory=str(_WEB_ROOT / "templates"))
     app.mount(
         "/static",
-        StaticFiles(directory=str(_WEB_ROOT / "static")),
+        LocalStaticFiles(directory=str(_WEB_ROOT / "static")),
         name="static",
     )
 
@@ -164,11 +176,22 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
     def dashboard(request: Request) -> HTMLResponse:
         """Render the local single-page document dashboard."""
-        return templates.TemplateResponse(
+        response = templates.TemplateResponse(
             request=request,
             name="dashboard.html",
-            context={"alert_days": 30, "max_upload_mb": 25},
+            context={
+                "alert_days": 30,
+                "max_upload_mb": 25,
+                "dashboard_style": (_WEB_ROOT / "static" / "dashboard.css").read_text(
+                    encoding="utf-8"
+                ),
+                "dashboard_script": (
+                    _WEB_ROOT / "static" / "dashboard.js"
+                ).read_text(encoding="utf-8"),
+            },
         )
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        return response
 
     @app.get("/api/documents", response_model=list[DocumentResponse])
     def list_documents(

@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Smart Doc Tracker</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='/dashboard.css') }}">
+    <style>{{ dashboard_style | safe }}</style>
   </head>
   <body>
     <header class="topbar">
@@ -120,6 +120,6 @@
       <div id="review-detail"></div>
     </dialog>
 
-    <script src="{{ url_for('static', path='/dashboard.js') }}" defer></script>
+    <script>{{ dashboard_script | safe }}</script>
   </body>
 </html>

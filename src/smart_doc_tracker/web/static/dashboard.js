@@ -128,7 +128,8 @@ function showDetail(item) {
       <dt>Record ID</dt><dd><code>${escapeHtml(item.id)}</code></dd>
     </dl>
     <h3>Extracted attributes</h3>
-    <pre>${escapeHtml(JSON.stringify(item.extracted_data, null, 2))}</pre>
+    <div class="attribute-column-labels attribute-view-labels" aria-hidden="true"><span>Field name</span><span>Value</span></div>
+    <div id="extracted-attributes" class="attribute-view"></div>
     <section class="indexed-content-section">
       <div class="attributes-heading"><h3>Complete indexed content</h3>
       <button id="load-indexed-content" class="secondary compact" type="button">Load content</button></div>
@@ -137,6 +138,7 @@ function showDetail(item) {
     </section>
     <div class="actions dialog-actions"><button id="edit-document" type="button">Edit</button>
     <button id="delete-document" class="danger-button" type="button">Delete</button></div>`;
+  renderAttributeView(detail.querySelector("#extracted-attributes"), item.extracted_data);
   detail.querySelector("#load-indexed-content").addEventListener("click", (event) => {
     loadIndexedContent(item.id, event.currentTarget, detail.querySelector("#indexed-content"));
   });
@@ -192,6 +194,7 @@ function showEditor(item, isPending) {
         <div><label for="edit-expiry-date">Expiry date</label><input id="edit-expiry-date" name="expiry_date" type="date" value="${escapeHtml(documentData.expiry_date || "")}"></div>
       </div>
       <div class="attributes-heading"><h3>Extracted attributes</h3><button id="add-field" class="secondary compact" type="button">Add field</button></div>
+      <div class="attribute-column-labels" aria-hidden="true"><span>Field name</span><span>Value</span></div>
       <div id="attribute-fields"></div>
       <div id="editor-message" class="editor-message" role="alert" hidden></div>
       <div class="actions dialog-actions"><button type="submit">${isPending ? "Confirm and save" : "Save changes"}</button>
@@ -206,46 +209,366 @@ function showEditor(item, isPending) {
 }
 
 function addFieldRow(container, key = "", value = "") {
+  addValueNode(container, key, value, false);
+}
+
+function containerKind(value) {
+  if (Array.isArray(value)) {
+    const objects = value.length > 0 && value.every((item) => item !== null && typeof item === "object" && !Array.isArray(item));
+    if (objects && value.every((item) => {
+      const keys = Object.keys(item);
+      return keys.length === 2 && keys.includes("type") && keys.includes("value") && typeof item.type === "string";
+    })) return "typed-array";
+    if (objects) {
+      const itemField = Object.keys(value[0]).length === 1 ? Object.keys(value[0])[0] : null;
+      if (itemField && value.every((item) => {
+        const keys = Object.keys(item);
+        const itemValue = item[itemField];
+        return keys.length === 1 && keys[0] === itemField
+          && (itemValue === null || typeof itemValue !== "object");
+      })) return "single-field-array";
+    }
+    return "array";
+  }
+  if (value !== null && typeof value === "object") return "object";
+  return "scalar";
+}
+
+function isArrayKind(kind) {
+  return kind === "array" || kind === "typed-array" || kind === "single-field-array";
+}
+
+function fieldLabel(value) {
+  const normalized = String(value).replaceAll("_", " ");
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+function containerEntries(kind, value, itemField = "") {
+  if (kind === "typed-array") return value.map((item) => [item.type, item.value]);
+  if (kind === "single-field-array") {
+    return value.map((item, index) => [`${fieldLabel(itemField)} ${index + 1}`, item[itemField]]);
+  }
+  if (kind === "array") return Array.from(value.entries()).map(([index, item]) => [`Item ${index + 1}`, item]);
+  return Object.entries(value);
+}
+
+function createKeyControl(key, isArrayItem) {
+  if (isArrayItem) {
+    const label = document.createElement("span");
+    label.className = "attribute-key attribute-key-label";
+    label.textContent = key;
+    return label;
+  }
+  const input = document.createElement("input");
+  input.className = "attribute-key";
+  input.setAttribute("aria-label", "Field name");
+  input.placeholder = "Field name";
+  input.value = key;
+  return input;
+}
+
+function displayScalarValue(value) {
+  if (value === null || value === undefined) return "Not available";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  return String(value);
+}
+
+function addAttributeViewNode(container, key, value) {
+  const kind = containerKind(value);
+  if (kind === "single-field-array") {
+    const row = document.createElement("div");
+    row.className = "attribute-view-row compact-list-view-row";
+    const keyLabel = document.createElement("span");
+    keyLabel.className = "attribute-view-key";
+    keyLabel.textContent = key;
+    const values = document.createElement("span");
+    values.className = "compact-list-view-values";
+    const itemField = Object.keys(value[0])[0];
+    value.forEach((item) => {
+      const itemValue = document.createElement("span");
+      itemValue.className = "compact-list-view-value";
+      itemValue.textContent = displayScalarValue(item[itemField]);
+      values.append(itemValue);
+    });
+    row.append(keyLabel, values);
+    container.append(row);
+    return;
+  }
+  if (kind === "scalar") {
+    const row = document.createElement("div");
+    row.className = "attribute-view-row";
+    const keyLabel = document.createElement("span");
+    keyLabel.className = "attribute-view-key";
+    keyLabel.textContent = key;
+    const valueLabel = document.createElement("span");
+    valueLabel.className = "attribute-view-value";
+    valueLabel.textContent = displayScalarValue(value);
+    row.append(keyLabel, valueLabel);
+    container.append(row);
+    return;
+  }
+
+  const details = document.createElement("details");
+  details.className = "nested-value attribute-view-group";
+  const summary = document.createElement("summary");
+  const summaryContent = document.createElement("span");
+  summaryContent.className = "attribute-view-summary-content";
+  const keyLabel = document.createElement("span");
+  keyLabel.className = "attribute-view-key";
+  keyLabel.textContent = key;
+  const countLabel = document.createElement("span");
+  const itemField = kind === "single-field-array" ? Object.keys(value[0])[0] : "";
+  const entries = containerEntries(kind, value, itemField);
+  const noun = isArrayKind(kind) ? (entries.length === 1 ? "item" : "items") : (entries.length === 1 ? "field" : "fields");
+  countLabel.textContent = `${entries.length} ${noun}`;
+  summaryContent.append(keyLabel, countLabel);
+  summary.append(summaryContent);
+  details.append(summary);
+
+  const children = document.createElement("div");
+  children.className = "attribute-view-children";
+  entries.forEach(([childKey, childValue]) => {
+    addAttributeViewNode(children, childKey, childValue);
+  });
+  details.append(children);
+  container.append(details);
+}
+
+function renderAttributeView(container, data) {
+  Object.entries(data).forEach(([key, value]) => addAttributeViewNode(container, key, value));
+  if (!container.children.length) container.textContent = "No extracted attributes.";
+}
+
+function createScalarControl(value) {
+  let input;
+  if (typeof value === "boolean") {
+    input = document.createElement("select");
+    [["true", "Yes"], ["false", "No"]].forEach(([optionValue, label]) => {
+      const option = document.createElement("option");
+      option.value = optionValue;
+      option.textContent = label;
+      input.append(option);
+    });
+    input.value = String(value);
+  } else {
+    input = document.createElement("input");
+    input.value = value === null || value === undefined ? "" : String(value);
+    input.placeholder = value === null ? "Not available" : "Value";
+    if (typeof value === "number") {
+      input.type = "number";
+      input.step = "any";
+    }
+  }
+  input.className = "attribute-value";
+  input.setAttribute("aria-label", "Field value");
+  return input;
+}
+
+function scalarType(value) {
+  return value === null || value === undefined ? "null" : typeof value;
+}
+
+function addCompactListItem(container, value) {
+  const item = document.createElement("div");
+  item.className = "compact-list-item";
+  item.dataset.scalarType = scalarType(value);
+  item.append(createScalarControl(value));
+
+  const removeButton = document.createElement("button");
+  removeButton.className = "secondary compact compact-list-remove";
+  removeButton.type = "button";
+  removeButton.setAttribute("aria-label", "Remove list item");
+  removeButton.textContent = "\u00d7";
+  removeButton.addEventListener("click", () => item.remove());
+  item.append(removeButton);
+  container.append(item);
+}
+
+function updateContainerSummary(node) {
+  const kind = node.dataset.valueKind;
+  const nested = node.querySelector(":scope > .attribute-row .nested-fields");
+  const count = Array.from(nested.children).filter((child) => child.classList.contains("attribute-node")).length;
+  const noun = isArrayKind(kind) ? (count === 1 ? "item" : "items") : (count === 1 ? "field" : "fields");
+  node.querySelector(":scope > .attribute-row .nested-summary-text").textContent = `${count} ${noun}`;
+}
+
+function renumberArrayItems(container, parentNode) {
+  const prefix = parentNode.dataset.valueKind === "single-field-array"
+    ? fieldLabel(parentNode.dataset.itemField)
+    : "Item";
+  Array.from(container.children)
+    .filter((child) => child.classList.contains("attribute-node"))
+    .forEach((child, index) => {
+      child.querySelector(":scope > .attribute-row > .attribute-key").textContent = `${prefix} ${index + 1}`;
+    });
+}
+
+function addValueNode(container, key, value, isArrayItem) {
+  const node = document.createElement("div");
+  node.className = "attribute-node";
+  node.dataset.valueKind = containerKind(value);
+  if (node.dataset.valueKind === "single-field-array") node.dataset.itemField = Object.keys(value[0])[0];
+
   const row = document.createElement("div");
   row.className = "attribute-row";
-  const serialized = typeof value === "string" ? value : JSON.stringify(value);
-  const keyInput = document.createElement("input");
-  keyInput.className = "attribute-key";
-  keyInput.setAttribute("aria-label", "Attribute name");
-  keyInput.placeholder = "field_name";
-  keyInput.value = key;
-  keyInput.required = true;
+  row.append(createKeyControl(key, isArrayItem));
 
-  const valueInput = document.createElement("input");
-  valueInput.className = "attribute-value";
-  valueInput.setAttribute("aria-label", "Attribute value");
-  valueInput.placeholder = "Value or JSON";
-  valueInput.value = serialized;
+  const valueCell = document.createElement("div");
+  valueCell.className = "attribute-value-cell";
+  if (node.dataset.valueKind === "single-field-array") {
+    const list = document.createElement("div");
+    list.className = "compact-list-editor";
+    value.forEach((item) => addCompactListItem(list, item[node.dataset.itemField]));
+    const addButton = document.createElement("button");
+    addButton.className = "secondary compact add-compact-list-item";
+    addButton.type = "button";
+    addButton.textContent = "Add item";
+    addButton.addEventListener("click", () => {
+      addCompactListItem(list, "");
+      list.append(addButton);
+    });
+    list.append(addButton);
+    valueCell.append(list);
+  } else if (node.dataset.valueKind === "scalar") {
+    node.dataset.scalarType = scalarType(value);
+    valueCell.append(createScalarControl(value));
+  } else {
+    const details = document.createElement("details");
+    details.className = "nested-value";
+    const summary = document.createElement("summary");
+    const summaryText = document.createElement("span");
+    summaryText.className = "nested-summary-text";
+    summary.append(summaryText);
+
+    const labels = document.createElement("div");
+    labels.className = "attribute-column-labels nested-column-labels";
+    labels.setAttribute("aria-hidden", "true");
+    labels.innerHTML = node.dataset.valueKind === "single-field-array"
+      ? "<span>Item</span><span>Value</span>"
+      : "<span>Field name</span><span>Value</span>";
+
+    const nested = document.createElement("div");
+    nested.className = "nested-fields";
+    const entries = containerEntries(node.dataset.valueKind, value, node.dataset.itemField);
+    for (const [childKey, childValue] of entries) {
+      const fixedItemLabel = node.dataset.valueKind === "array" || node.dataset.valueKind === "single-field-array";
+      addValueNode(nested, childKey, childValue, fixedItemLabel);
+    }
+
+    const addButton = document.createElement("button");
+    addButton.className = "secondary compact add-nested-field";
+    addButton.type = "button";
+    addButton.textContent = isArrayKind(node.dataset.valueKind) ? "Add item" : "Add field";
+    addButton.addEventListener("click", () => {
+      const count = directFieldNodes(nested).length + 1;
+      let childKey = "";
+      let fixedItemLabel = false;
+      if (node.dataset.valueKind === "array") {
+        childKey = `Item ${count}`;
+        fixedItemLabel = true;
+      } else if (node.dataset.valueKind === "single-field-array") {
+        childKey = `${fieldLabel(node.dataset.itemField)} ${count}`;
+        fixedItemLabel = true;
+      }
+      addValueNode(nested, childKey, "", fixedItemLabel);
+      details.open = true;
+      updateContainerSummary(node);
+    });
+    details.append(summary, labels, nested, addButton);
+    valueCell.append(details);
+  }
+  row.append(valueCell);
 
   const removeButton = document.createElement("button");
   removeButton.className = "secondary compact remove-field";
   removeButton.type = "button";
-  removeButton.setAttribute("aria-label", "Remove attribute");
+  removeButton.setAttribute("aria-label", `Remove ${key || "field"}`);
   removeButton.textContent = "\u00d7";
-  removeButton.addEventListener("click", () => row.remove());
+  removeButton.addEventListener("click", () => {
+    const parentNode = container.closest(".attribute-node");
+    node.remove();
+    if (parentNode && ["array", "single-field-array"].includes(parentNode.dataset.valueKind)) {
+      renumberArrayItems(container, parentNode);
+    }
+    if (parentNode) updateContainerSummary(parentNode);
+  });
+  row.append(removeButton);
+  node.append(row);
+  container.append(node);
+  if (!["scalar", "single-field-array"].includes(node.dataset.valueKind)) {
+    updateContainerSummary(node);
+  }
+}
 
-  row.append(keyInput, valueInput, removeButton);
-  container.append(row);
+function directFieldNodes(container) {
+  return Array.from(container.children).filter((child) => child.classList.contains("attribute-node"));
+}
+
+function readScalarValue(node) {
+  const input = node.querySelector(":scope > .attribute-row .attribute-value");
+  return readScalarControl(input, node.dataset.scalarType);
+}
+
+function readScalarControl(input, valueType) {
+  if (valueType === "boolean") return input.value === "true";
+  if (valueType === "number") {
+    if (input.value === "") throw new Error("Numeric fields cannot be empty.");
+    return Number(input.value);
+  }
+  if (valueType === "null" && input.value === "") return null;
+  return input.value;
+}
+
+function readNodeValue(node) {
+  if (node.dataset.valueKind === "scalar") return readScalarValue(node);
+  if (node.dataset.valueKind === "single-field-array") {
+    const items = node.querySelectorAll(":scope > .attribute-row .compact-list-item");
+    return Array.from(items).map((item) => ({
+      [node.dataset.itemField]: readScalarControl(
+        item.querySelector(".attribute-value"),
+        item.dataset.scalarType,
+      ),
+    }));
+  }
+  const nested = node.querySelector(":scope > .attribute-row .nested-fields");
+  const children = directFieldNodes(nested);
+  if (node.dataset.valueKind === "array") return children.map(readNodeValue);
+  if (node.dataset.valueKind === "typed-array") {
+    return children.map((child) => {
+      const keyInput = child.querySelector(":scope > .attribute-row > .attribute-key");
+      const type = keyInput.value.trim();
+      if (!type) {
+        keyInput.focus();
+        throw new Error("Every contact field must have a name.");
+      }
+      return { type, value: readNodeValue(child) };
+    });
+  }
+  const result = {};
+  children.forEach((child) => {
+    const keyInput = child.querySelector(":scope > .attribute-row > .attribute-key");
+    const key = keyInput.value.trim();
+    if (!key) {
+      keyInput.focus();
+      throw new Error("Every field must have a name.");
+    }
+    result[key] = readNodeValue(child);
+  });
+  return result;
 }
 
 function editorPayload(form) {
   const data = new FormData(form);
   const extractedData = {};
-  form.querySelectorAll(".attribute-row").forEach((row) => {
-    const key = row.querySelector(".attribute-key").value.trim();
-    const valueInput = row.querySelector(".attribute-value");
-    const rawValue = valueInput.value.trim();
-    if (!key) throw new Error("Every custom field must have a name.");
-    if (/^[\[{]+$/.test(rawValue)) {
-      valueInput.focus();
-      throw new Error(`Field "${key}" contains incomplete JSON. Replace it with valid JSON (for example []) or remove the field.`);
+  const fields = form.querySelector("#attribute-fields");
+  directFieldNodes(fields).forEach((node) => {
+    const keyInput = node.querySelector(":scope > .attribute-row > .attribute-key");
+    const key = keyInput.value.trim();
+    if (!key) {
+      keyInput.focus();
+      throw new Error("Every field must have a name.");
     }
-    try { extractedData[key] = JSON.parse(rawValue); } catch (_error) { extractedData[key] = rawValue; }
+    extractedData[key] = readNodeValue(node);
   });
   return {
     document_type: data.get("document_type"), summary: data.get("summary"),

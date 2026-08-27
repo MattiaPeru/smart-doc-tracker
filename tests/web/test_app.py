@@ -215,6 +215,16 @@ class WebApplicationTests(TestCase):
         self.assertIn("position: fixed", stylesheet.text)
         self.assertIn("z-index: 1000", stylesheet.text)
 
+    def test_dashboard_inlines_current_assets_to_avoid_stale_cache(self) -> None:
+        dashboard = self.client.get("/")
+        script = self.client.get("/static/dashboard.js")
+
+        self.assertNotIn("/static/dashboard.css", dashboard.text)
+        self.assertNotIn("/static/dashboard.js", dashboard.text)
+        self.assertIn('list.className = "compact-list-editor"', dashboard.text)
+        self.assertEqual(dashboard.headers["cache-control"], "no-store, max-age=0")
+        self.assertEqual(script.headers["cache-control"], "no-store, max-age=0")
+
     def test_dashboard_exposes_a_separate_processing_queue(self) -> None:
         dashboard = self.client.get("/")
         script = self.client.get("/static/dashboard.js")
@@ -235,19 +245,51 @@ class WebApplicationTests(TestCase):
         stylesheet = self.client.get("/static/dashboard.css")
 
         self.assertIn('id="editor-message"', script.text)
-        self.assertIn("contains incomplete JSON", script.text)
+        self.assertIn("Every field must have a name", script.text)
         self.assertIn("editorMessage.hidden = false", script.text)
         self.assertIn(".editor-message", stylesheet.text)
 
-    def test_dashboard_assigns_nested_json_values_through_the_dom(self) -> None:
+    def test_dashboard_renders_nested_values_as_expandable_fields(self) -> None:
         script = self.client.get("/static/dashboard.js")
+        stylesheet = self.client.get("/static/dashboard.css")
 
         self.assertEqual(script.status_code, 200)
+        self.assertIn('details.className = "nested-value"', script.text)
+        self.assertIn('"<span>Field name</span><span>Value</span>"', script.text)
         self.assertIn(
-            'const valueInput = document.createElement("input");', script.text
+            'addButton.textContent = isArrayKind(node.dataset.valueKind) '
+            '? "Add item" : "Add field"',
+            script.text,
         )
-        self.assertIn("valueInput.value = serialized;", script.text)
-        self.assertNotIn('value="${escapeHtml(serialized)}"', script.text)
+        self.assertIn("children.map(readNodeValue)", script.text)
+        self.assertNotIn("JSON.stringify(value)", script.text)
+        self.assertIn(".nested-value > summary", stylesheet.text)
+
+    def test_dashboard_shows_extracted_attributes_without_raw_json(self) -> None:
+        script = self.client.get("/static/dashboard.js")
+
+        self.assertIn("renderAttributeView", script.text)
+        self.assertIn('class="attribute-view"', script.text)
+        self.assertIn('keyLabel.textContent = key', script.text)
+        self.assertNotIn("JSON.stringify(item.extracted_data", script.text)
+
+    def test_dashboard_flattens_common_extracted_lists_for_people(self) -> None:
+        script = self.client.get("/static/dashboard.js")
+
+        self.assertIn('return "typed-array"', script.text)
+        self.assertIn('return "single-field-array"', script.text)
+        self.assertIn("value.map((item) => [item.type, item.value])", script.text)
+        self.assertIn("{ type, value: readNodeValue(child) }", script.text)
+        self.assertIn('list.className = "compact-list-editor"', script.text)
+        self.assertIn('values.className = "compact-list-view-values"', script.text)
+        self.assertIn("item[node.dataset.itemField]", script.text)
+
+    def test_document_editor_allows_scrolling_long_nested_values(self) -> None:
+        stylesheet = self.client.get("/static/dashboard.css")
+
+        self.assertIn("max-height: calc(100vh - 32px)", stylesheet.text)
+        self.assertIn("overflow-x: auto", stylesheet.text)
+        self.assertIn("min-width: 520px", stylesheet.text)
 
     def test_dashboard_preserves_form_references_across_async_requests(self) -> None:
         script = self.client.get("/static/dashboard.js")
