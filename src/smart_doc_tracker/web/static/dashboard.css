@@ -192,6 +192,9 @@ pre { overflow: auto; border-radius: 8px; padding: 14px; background: #f1f2ef; wh
 .add-compact-list-item { justify-self: start; }
 .compact-list-view-values { display: grid; gap: 6px; }
 .compact-list-view-value { border-radius: 7px; padding: 7px 10px; background: #f1f2ef; overflow-wrap: anywhere; }
+.grouped-list-row { display: grid; grid-template-columns: minmax(110px, .8fr) minmax(160px, 1.4fr) 42px; gap: 8px; padding: 0 20px 10px; }
+.grouped-list-row .compact-list-editor { grid-column: 2 / 4; }
+.grouped-list-rows { display: grid; gap: 8px; }
 .attribute-view { display: grid; gap: 8px; }
 .attribute-view-labels { grid-template-columns: minmax(150px, .8fr) minmax(220px, 1.4fr); }
 .attribute-view-row, .attribute-view-summary-content { display: grid; grid-template-columns: minmax(150px, .8fr) minmax(220px, 1.4fr); gap: 8px; align-items: baseline; }

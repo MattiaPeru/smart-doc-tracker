@@ -278,11 +278,17 @@ class WebApplicationTests(TestCase):
 
         self.assertIn('return "typed-array"', script.text)
         self.assertIn('return "single-field-array"', script.text)
+        self.assertIn('return "scalar-array"', script.text)
         self.assertIn("value.map((item) => [item.type, item.value])", script.text)
         self.assertIn("{ type, value: readNodeValue(child) }", script.text)
         self.assertIn('list.className = "compact-list-editor"', script.text)
         self.assertIn('values.className = "compact-list-view-values"', script.text)
-        self.assertIn("item[node.dataset.itemField]", script.text)
+        self.assertIn("item[itemField]", script.text)
+        self.assertIn('details.className = "nested-value grouped-list-editor"', script.text)
+        self.assertIn('fieldInput.className = "grouped-list-key"', script.text)
+        self.assertIn("groupedSingleFieldItems(value).forEach", script.text)
+        self.assertIn("records.sort", script.text)
+        self.assertIn(".grouped-list-row", self.client.get("/static/dashboard.css").text)
 
     def test_document_editor_allows_scrolling_long_nested_values(self) -> None:
         stylesheet = self.client.get("/static/dashboard.css")

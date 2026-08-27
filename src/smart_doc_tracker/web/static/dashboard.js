@@ -219,14 +219,14 @@ function containerKind(value) {
       const keys = Object.keys(item);
       return keys.length === 2 && keys.includes("type") && keys.includes("value") && typeof item.type === "string";
     })) return "typed-array";
-    if (objects) {
-      const itemField = Object.keys(value[0]).length === 1 ? Object.keys(value[0])[0] : null;
-      if (itemField && value.every((item) => {
+    if (objects && value.every((item) => {
         const keys = Object.keys(item);
-        const itemValue = item[itemField];
-        return keys.length === 1 && keys[0] === itemField
+        const itemValue = item[keys[0]];
+        return keys.length === 1
           && (itemValue === null || typeof itemValue !== "object");
       })) return "single-field-array";
+    if (value.length > 0 && value.every((item) => item === null || typeof item !== "object")) {
+      return "scalar-array";
     }
     return "array";
   }
@@ -235,7 +235,7 @@ function containerKind(value) {
 }
 
 function isArrayKind(kind) {
-  return kind === "array" || kind === "typed-array" || kind === "single-field-array";
+  return kind === "array" || kind === "typed-array" || kind === "single-field-array" || kind === "scalar-array";
 }
 
 function fieldLabel(value) {
@@ -250,6 +250,16 @@ function containerEntries(kind, value, itemField = "") {
   }
   if (kind === "array") return Array.from(value.entries()).map(([index, item]) => [`Item ${index + 1}`, item]);
   return Object.entries(value);
+}
+
+function groupedSingleFieldItems(value) {
+  const groups = new Map();
+  value.forEach((item, originalIndex) => {
+    const itemField = Object.keys(item)[0];
+    if (!groups.has(itemField)) groups.set(itemField, []);
+    groups.get(itemField).push({ value: item[itemField], originalIndex });
+  });
+  return groups;
 }
 
 function createKeyControl(key, isArrayItem) {
@@ -275,7 +285,7 @@ function displayScalarValue(value) {
 
 function addAttributeViewNode(container, key, value) {
   const kind = containerKind(value);
-  if (kind === "single-field-array") {
+  if (kind === "scalar-array") {
     const row = document.createElement("div");
     row.className = "attribute-view-row compact-list-view-row";
     const keyLabel = document.createElement("span");
@@ -283,15 +293,51 @@ function addAttributeViewNode(container, key, value) {
     keyLabel.textContent = key;
     const values = document.createElement("span");
     values.className = "compact-list-view-values";
-    const itemField = Object.keys(value[0])[0];
     value.forEach((item) => {
       const itemValue = document.createElement("span");
       itemValue.className = "compact-list-view-value";
-      itemValue.textContent = displayScalarValue(item[itemField]);
+      itemValue.textContent = displayScalarValue(item);
       values.append(itemValue);
     });
     row.append(keyLabel, values);
     container.append(row);
+    return;
+  }
+  if (kind === "single-field-array") {
+    const details = document.createElement("details");
+    details.className = "nested-value attribute-view-group grouped-list-view";
+    const summary = document.createElement("summary");
+    const summaryContent = document.createElement("span");
+    summaryContent.className = "attribute-view-summary-content";
+    const keyLabel = document.createElement("span");
+    keyLabel.className = "attribute-view-key";
+    keyLabel.textContent = key;
+    const countLabel = document.createElement("span");
+    countLabel.textContent = `${value.length} ${value.length === 1 ? "item" : "items"}`;
+    summaryContent.append(keyLabel, countLabel);
+    summary.append(summaryContent);
+
+    const children = document.createElement("div");
+    children.className = "attribute-view-children";
+    groupedSingleFieldItems(value).forEach((items, itemField) => {
+      const row = document.createElement("div");
+      row.className = "attribute-view-row compact-list-view-row";
+      const fieldLabel = document.createElement("span");
+      fieldLabel.className = "attribute-view-key";
+      fieldLabel.textContent = itemField;
+      const values = document.createElement("span");
+      values.className = "compact-list-view-values";
+      items.forEach((item) => {
+        const itemValue = document.createElement("span");
+        itemValue.className = "compact-list-view-value";
+        itemValue.textContent = displayScalarValue(item.value);
+        values.append(itemValue);
+      });
+      row.append(fieldLabel, values);
+      children.append(row);
+    });
+    details.append(summary, children);
+    container.append(details);
     return;
   }
   if (kind === "scalar") {
@@ -368,10 +414,11 @@ function scalarType(value) {
   return value === null || value === undefined ? "null" : typeof value;
 }
 
-function addCompactListItem(container, value) {
+function addCompactListItem(container, value, onRemove = null, originalIndex = null) {
   const item = document.createElement("div");
   item.className = "compact-list-item";
   item.dataset.scalarType = scalarType(value);
+  if (originalIndex !== null) item.dataset.originalIndex = String(originalIndex);
   item.append(createScalarControl(value));
 
   const removeButton = document.createElement("button");
@@ -379,15 +426,49 @@ function addCompactListItem(container, value) {
   removeButton.type = "button";
   removeButton.setAttribute("aria-label", "Remove list item");
   removeButton.textContent = "\u00d7";
-  removeButton.addEventListener("click", () => item.remove());
+  removeButton.addEventListener("click", () => {
+    item.remove();
+    if (onRemove) onRemove();
+  });
   item.append(removeButton);
   container.append(item);
+}
+
+function addGroupedListRow(container, node, itemField, items) {
+  const groupedRow = document.createElement("div");
+  groupedRow.className = "grouped-list-row";
+  const fieldInput = document.createElement("input");
+  fieldInput.className = "grouped-list-key";
+  fieldInput.setAttribute("aria-label", "Field name");
+  fieldInput.value = itemField;
+  const list = document.createElement("div");
+  list.className = "compact-list-editor";
+  items.forEach((item) => addCompactListItem(
+    list,
+    item.value,
+    () => updateContainerSummary(node),
+    item.originalIndex,
+  ));
+  const addButton = document.createElement("button");
+  addButton.className = "secondary compact add-compact-list-item";
+  addButton.type = "button";
+  addButton.textContent = "Add item";
+  addButton.addEventListener("click", () => {
+    addCompactListItem(list, "", () => updateContainerSummary(node));
+    list.append(addButton);
+    updateContainerSummary(node);
+  });
+  list.append(addButton);
+  groupedRow.append(fieldInput, list);
+  container.append(groupedRow);
 }
 
 function updateContainerSummary(node) {
   const kind = node.dataset.valueKind;
   const nested = node.querySelector(":scope > .attribute-row .nested-fields");
-  const count = Array.from(nested.children).filter((child) => child.classList.contains("attribute-node")).length;
+  const count = nested
+    ? Array.from(nested.children).filter((child) => child.classList.contains("attribute-node")).length
+    : node.querySelectorAll(":scope > .attribute-row .compact-list-item").length;
   const noun = isArrayKind(kind) ? (count === 1 ? "item" : "items") : (count === 1 ? "field" : "fields");
   node.querySelector(":scope > .attribute-row .nested-summary-text").textContent = `${count} ${noun}`;
 }
@@ -407,7 +488,6 @@ function addValueNode(container, key, value, isArrayItem) {
   const node = document.createElement("div");
   node.className = "attribute-node";
   node.dataset.valueKind = containerKind(value);
-  if (node.dataset.valueKind === "single-field-array") node.dataset.itemField = Object.keys(value[0])[0];
 
   const row = document.createElement("div");
   row.className = "attribute-row";
@@ -415,10 +495,10 @@ function addValueNode(container, key, value, isArrayItem) {
 
   const valueCell = document.createElement("div");
   valueCell.className = "attribute-value-cell";
-  if (node.dataset.valueKind === "single-field-array") {
+  if (node.dataset.valueKind === "scalar-array") {
     const list = document.createElement("div");
     list.className = "compact-list-editor";
-    value.forEach((item) => addCompactListItem(list, item[node.dataset.itemField]));
+    value.forEach((item) => addCompactListItem(list, item));
     const addButton = document.createElement("button");
     addButton.className = "secondary compact add-compact-list-item";
     addButton.type = "button";
@@ -429,6 +509,35 @@ function addValueNode(container, key, value, isArrayItem) {
     });
     list.append(addButton);
     valueCell.append(list);
+  } else if (node.dataset.valueKind === "single-field-array") {
+    const details = document.createElement("details");
+    details.className = "nested-value grouped-list-editor";
+    const summary = document.createElement("summary");
+    const summaryText = document.createElement("span");
+    summaryText.className = "nested-summary-text";
+    summary.append(summaryText);
+
+    const labels = document.createElement("div");
+    labels.className = "attribute-column-labels nested-column-labels";
+    labels.setAttribute("aria-hidden", "true");
+    labels.innerHTML = "<span>Field name</span><span>Value</span>";
+
+    const groupedRows = document.createElement("div");
+    groupedRows.className = "grouped-list-rows";
+    groupedSingleFieldItems(value).forEach((items, itemField) => {
+      addGroupedListRow(groupedRows, node, itemField, items);
+    });
+    const addFieldButton = document.createElement("button");
+    addFieldButton.className = "secondary compact add-nested-field";
+    addFieldButton.type = "button";
+    addFieldButton.textContent = "Add field";
+    addFieldButton.addEventListener("click", () => {
+      addGroupedListRow(groupedRows, node, "", [{ value: "", originalIndex: null }]);
+      details.open = true;
+      updateContainerSummary(node);
+    });
+    details.append(summary, labels, groupedRows, addFieldButton);
+    valueCell.append(details);
   } else if (node.dataset.valueKind === "scalar") {
     node.dataset.scalarType = scalarType(value);
     valueCell.append(createScalarControl(value));
@@ -495,7 +604,7 @@ function addValueNode(container, key, value, isArrayItem) {
   row.append(removeButton);
   node.append(row);
   container.append(node);
-  if (!["scalar", "single-field-array"].includes(node.dataset.valueKind)) {
+  if (node.dataset.valueKind !== "scalar" && node.dataset.valueKind !== "scalar-array") {
     updateContainerSummary(node);
   }
 }
@@ -521,14 +630,41 @@ function readScalarControl(input, valueType) {
 
 function readNodeValue(node) {
   if (node.dataset.valueKind === "scalar") return readScalarValue(node);
-  if (node.dataset.valueKind === "single-field-array") {
+  if (node.dataset.valueKind === "scalar-array") {
     const items = node.querySelectorAll(":scope > .attribute-row .compact-list-item");
-    return Array.from(items).map((item) => ({
-      [node.dataset.itemField]: readScalarControl(
-        item.querySelector(".attribute-value"),
-        item.dataset.scalarType,
-      ),
-    }));
+    return Array.from(items).map((item) => readScalarControl(
+      item.querySelector(".attribute-value"),
+      item.dataset.scalarType,
+    ));
+  }
+  if (node.dataset.valueKind === "single-field-array") {
+    const records = [];
+    node.querySelectorAll(":scope > .attribute-row .grouped-list-row").forEach((row, groupIndex) => {
+      const fieldInput = row.querySelector(".grouped-list-key");
+      const itemField = fieldInput.value.trim();
+      if (!itemField) {
+        fieldInput.focus();
+        throw new Error("Every field must have a name.");
+      }
+      row.querySelectorAll(".compact-list-item").forEach((item, itemIndex) => {
+        const originalIndex = item.dataset.originalIndex;
+        records.push({
+          order: originalIndex === undefined ? Number.MAX_SAFE_INTEGER : Number(originalIndex),
+          groupIndex,
+          itemIndex,
+          value: {
+            [itemField]: readScalarControl(
+              item.querySelector(".attribute-value"),
+              item.dataset.scalarType,
+            ),
+          },
+        });
+      });
+    });
+    records.sort((left, right) => left.order - right.order
+      || left.groupIndex - right.groupIndex
+      || left.itemIndex - right.itemIndex);
+    return records.map((record) => record.value);
   }
   const nested = node.querySelector(":scope > .attribute-row .nested-fields");
   const children = directFieldNodes(nested);
