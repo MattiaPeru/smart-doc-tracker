@@ -11,7 +11,7 @@ metadata. A rigid schema loses type-specific information; an entirely dynamic sc
 makes validation and common queries unreliable.
 
 Local model output is uncertain and must not be persisted without validation. The
-planned web editor must apply the same rules as automated extraction.
+web editor applies the same rules as automated extraction.
 
 ## Decision
 
@@ -30,7 +30,7 @@ types, and applies length limits. Dynamic keys use English `snake_case` at every
 level. Missing values remain explicit and ambiguous extraction results are preserved
 as alternatives rather than invented or silently discarded.
 
-HTTP request models will remain separate from persistence records while delegating
+HTTP request and response models remain separate from persistence records while delegating
 domain validation to the same rules.
 
 ## Consequences

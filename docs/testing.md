@@ -13,6 +13,7 @@ privacy properties without requiring network access or real personal documents.
 | Component | Repository and adapter behavior through fakes |
 | Pipeline | Cross-component sequencing, partial failures, idempotency |
 | CLI | Argument validation, dispatch, output, and exit codes |
+| Web | FastAPI routes, browser assets, durable jobs, and coordinated mutations |
 | Script | Windows scheduling and runner safety properties |
 | Manual smoke | Optional local Tesseract, Ollama, MongoDB, ChromaDB integration |
 
@@ -73,23 +74,25 @@ At minimum, tests should ensure that:
 Use clearly synthetic fixtures such as invented policy numbers and names. Avoid
 realistic tax identifiers, health data, addresses, or copied document layouts.
 
-## Planned FastAPI tests
+## FastAPI tests
 
-The web release requires additional offline tests for:
+The current offline web tests cover:
 
 - loopback-only configuration and rejected public binds;
-- upload size, extension, decoded-content, and path validation;
-- CSRF, allowed-host, allowed-origin, and browser security headers;
+- upload size, extension, empty-file, and filename/path handling;
 - typed request validation and stable sanitized errors;
-- job state transitions, bounded concurrency, cancellation, and restart recovery;
+- job state transitions, bounded concurrency, restart recovery, confirmation,
+  rejection, and failed-job cleanup;
 - browser disconnection without job loss;
 - database filters that cannot inject arbitrary MongoDB operators;
-- RAG responses that cite only retrieved existing records;
-- notification minimization;
-- idempotent deletion and concurrent delete/read/index races;
-- full removal from MongoDB documents, sections, all Chroma collections, temporary
-  files, and explicitly managed archived files;
-- partial-deletion reconciliation without sensitive logs.
+- durable metadata-only index-refresh manifests;
+- metadata refresh after edits and coordinated MongoDB/Chroma deletion;
+- browser rendering and on-demand indexed-content display without embeddings.
+
+Still-required coverage before a hardened or broader deployment includes decoded-file
+signature validation, CSRF and explicit origin/host controls, restrictive security
+headers, cancellation, concurrent mutation races, all-collection deletion, archived
+file policy, and partial-failure reconciliation.
 
 Use FastAPI's in-process test client or an equivalent ASGI transport. Override every
 infrastructure dependency with a fake so HTTP tests remain deterministic and offline.

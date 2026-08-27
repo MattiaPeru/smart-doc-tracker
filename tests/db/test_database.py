@@ -69,9 +69,7 @@ class FakeCollection:
         )
 
     def delete_one(self, filter: dict[str, Any]) -> None:
-        self.documents = [
-            item for item in self.documents if not _matches(item, filter)
-        ]
+        self.documents = [item for item in self.documents if not _matches(item, filter)]
 
     def delete_many(self, filter: dict[str, Any]) -> None:
         self.delete_one(filter)

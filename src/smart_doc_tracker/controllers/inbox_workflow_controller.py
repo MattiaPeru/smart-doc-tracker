@@ -39,6 +39,7 @@ class InboxWorkflowController:
 
     def _failure_reporter(self) -> InboxFailureReporter:
         """Build a terminal reporter for safe per-file failure diagnostics."""
+
         def report(failure: InboxProcessingFailure) -> None:
             """Print one safe and actionable per-file error."""
             print(

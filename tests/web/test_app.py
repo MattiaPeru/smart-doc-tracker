@@ -285,7 +285,7 @@ class WebApplicationTests(TestCase):
         self.assertIn('details.className = "nested-value"', script.text)
         self.assertIn('"<span>Field name</span><span>Value</span>"', script.text)
         self.assertIn(
-            'addButton.textContent = isArrayKind(node.dataset.valueKind) '
+            "addButton.textContent = isArrayKind(node.dataset.valueKind) "
             '? "Add item" : "Add field"',
             script.text,
         )
@@ -298,7 +298,7 @@ class WebApplicationTests(TestCase):
 
         self.assertIn("renderAttributeView", script)
         self.assertIn('class="attribute-view"', script)
-        self.assertIn('keyLabel.textContent = key', script)
+        self.assertIn("keyLabel.textContent = key", script)
         self.assertNotIn("JSON.stringify(item.extracted_data", script)
 
     def test_dashboard_flattens_common_extracted_lists_for_people(self) -> None:
@@ -418,10 +418,9 @@ class WebApplicationTests(TestCase):
         self.assertEqual(
             len(
                 list(
-                    (
-                        Path(self.temporary_directory.name)
-                        / "pending_confirmation"
-                    ).glob("*.png")
+                    (Path(self.temporary_directory.name) / "pending_confirmation").glob(
+                        "*.png"
+                    )
                 )
             ),
             1,

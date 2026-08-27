@@ -1,89 +1,120 @@
-# Project Plan: Local AI Document Vault
+# Project Plan: Smart Doc Tracker
 
-## 1. Project Overview
-The goal is to build a "Privacy-First" local application that acts as a smart, comprehensive manager for personal documents (ID cards, insurance policies, contracts, invoices). 
-Operating 100% offline to guarantee absolute data privacy, the application automates the digitization process. It extracts text via OCR, uses a local LLM to understand and structure the data into dynamic JSON schemas using a **Hybrid Document Pattern (Base Envelope + Dynamic Payload)**, and stores everything in a local MongoDB database. While the initial core feature is automated expiration tracking, the system is designed to scale into a fully searchable document hub where users can categorize, query, and manage their paperwork regardless of the document type.
+## 1. Objective
 
-## 2. Tech Stack Architecture
-*   **Language:** Python 3.11+
-*   **OCR Module:** `pytesseract` (Tesseract) or `easyocr` (optimized for CPU processing).
-*   **LLM Engine:** `Ollama` running locally (target models: `qwen2.5:3b` or `llama3.2:3b`).
-*   **Data Validation:** `Pydantic` (to validate the Base Metadata envelope and dynamically capture document-specific fields).
-*   **Database:** `MongoDB` (running locally via Docker) managed with `pymongo`.
-*   **Notifications:** `plyer` or `win10toast` for native OS desktop notifications.
-*   **Scheduler:** `APScheduler` or built-in OS task scheduling.
+Smart Doc Tracker is a privacy-first, single-host document manager for personal
+documents such as identity records, policies, contracts, and invoices. It extracts
+text locally, converts uncertain model output into validated hybrid records, stores
+and searches those records locally, and tracks expiration dates without sending
+document data to remote services.
 
-## 3. Directory Structure
+The privacy boundary assumes a trusted host and local operating-system account. It
+does not promise protection from a compromised machine, privileged local users, or
+supply-chain threats.
+
+## 2. Implemented stack
+
+- Python 3.11 or newer with typed application boundaries.
+- Pillow, Tesseract through `pytesseract`, and PyMuPDF for local extraction.
+- Loopback-only Ollama for structured generation and embeddings.
+- Pydantic for the fixed metadata envelope and recursive dynamic payload.
+- Loopback-only MongoDB for authoritative validated records and PDF sections.
+- Loopback-only ChromaDB for derived semantic-search fragments.
+- `plyer`, APScheduler, and Windows Task Scheduler scripts for reminders.
+- FastAPI, Uvicorn, Jinja, CSS, and browser JavaScript for the local dashboard.
+- Pytest, Ruff, mypy, and branch coverage for the offline quality gate.
+
+Python dependencies and console entry points are defined in `pyproject.toml`.
+Docker Compose provides MongoDB and ChromaDB only; Tesseract and Ollama remain host
+dependencies.
+
+## 3. Current architecture
+
 ```text
-local-ai-doc-vault/
-├── data/
-│   ├── inbox/           # Directory to monitor for new incoming documents
-│   └── processed/       # Destination for successfully parsed documents
-├── src/
-│   └── smart_doc_tracker/ # Installable package and canonical Python namespace
-│       ├── core/        # Core business logic (e.g., OCR processing, LLM parsing)
-│       ├── infrastructure/ # Local infrastructure adapters
-│       ├── models/      # Hybrid Pydantic schemas (Base Envelope + Dynamic Payload)
-│       └── __main__.py  # Python module entry point
-├── tests/               # Unit and integration tests
-├── docker-compose.yml   # Docker configuration for local MongoDB instance
-├── requirements.txt     # Python dependencies
-└── README.md            # Project documentation
+smart_doc_tracker/
+|-- cli/ and controllers/ # CLI presentation and use-case dispatch
+|-- core/                 # OCR, PDF extraction, hashing, parsing
+|-- models/               # validated document and RAG models
+|-- interfaces/           # narrow dependency protocols
+|-- db/                   # MongoDB and ChromaDB adapters
+|-- infrastructure/       # loopback-only Ollama adapters
+|-- notifier/             # prepared local desktop notifications
+|-- web/                  # FastAPI routes, durable jobs, review UI, assets
+|-- pipeline.py           # document, inbox, RAG, and expiration orchestration
+|-- mutation_pipeline.py  # coordinated MongoDB/ChromaDB mutations
+`-- scheduler.py          # daily foreground scheduling
 ```
 
-## 4. Implementation Roadmap
+Sensitive runtime state may exist in MongoDB and ChromaDB volumes, `data/inbox`,
+`data/processed`, `data/processing_queue`, `data/pending_confirmation`, and
+`data/index_update_queue`.
 
-### Phase 1: Proof of Concept (OCR + Extraction)
+## 4. Delivered phases
+
+### Phase 1: Local extraction
+
 **Status: Implemented.**
 
-*   Set up the Python environment (`venv`) and dependencies.
-*   Implement a script to read a sample image file (e.g., a mockup ID card).
-*   Integrate `pytesseract` to extract raw text from the image.
-*   Output the raw text to the console for verification.
+- OCR for supported image formats.
+- Page-aware PDF text extraction with local OCR fallback.
+- Explicit opt-in display of raw extracted text.
 
-### Phase 2: Hybrid AI Parsing & Dynamic Structured Output
+### Phase 2: Validated hybrid parsing
+
 **Status: Implemented.**
 
-*   Define a **Hybrid `Pydantic` Schema** consisting of:
-    *   **Fixed Metadata Envelope:** Common required fields for system tasks (`document_type`, `summary`, `expiry_date`, `issue_date`).
-    *   **Dynamic Payload (`extracted_data: Dict[str, Any]`):** A flexible dictionary field that captures all unique, document-specific attributes extracted by the LLM (e.g., tax code for ID cards, patient name for medical certificates, line items for invoices).
-*   Implement the connection to the local `Ollama` instance.
-*   Develop system prompts instructing the LLM to extract standard metadata into the fixed envelope while dynamically populating all other specific findings inside the `extracted_data` dictionary.
-*   Parse, sanitize, and validate the LLM output into Python objects using Pydantic.
+- Fixed `document_type`, `summary`, `expiry_date`, and `issue_date` envelope.
+- Recursive JSON-compatible `extracted_data` with English `snake_case` keys.
+- Local Ollama generation, corrective retry, normalization, and strict validation.
+- Page-bounded parsing and consolidation for long PDFs.
 
-### Phase 3: Storage & Idempotency (MongoDB)
+### Phase 3: Persistence and semantic search
+
 **Status: Implemented.**
 
-*   Set up `docker-compose.yml` to spin up a local MongoDB container.
-*   Initialize the `pymongo` client in `database.py` and connect to the local instance.
-*   Implement a hashing mechanism (e.g., SHA-256) for incoming files to ensure the same document is not processed multiple times.
-*   Create CRUD operations supporting both fixed envelope fields and dynamic sub-documents:
-    *   `insert_document` (saving both envelope and `extracted_data`).
-    *   `get_document_by_id`.
-    *   `get_all_documents`.
-    *   `get_expiring_documents(days_threshold)`.
-    *   `search_by_dynamic_field(field_key, field_value)` (querying inside `extracted_data.<key>`).
+- SHA-256 idempotent MongoDB insertion and section storage.
+- Exact dynamic-field and expiration queries.
+- ChromaDB indexing of raw text, summary, and structured content with explicit local
+  Ollama embeddings.
+- Grounded CLI questions with validated source document IDs.
 
-### Phase 4: Active Monitoring (Expiration Tracking)
+### Phase 4: Automation and reminders
+
 **Status: Implemented.**
 
-*   Develop a query function to retrieve documents expiring within a specific timeframe (e.g., 30 days) from MongoDB via the standard `expiry_date` envelope field.
-*   Integrate a native notification library (`plyer`) to trigger OS-level desktop alerts for these items.
-*   Set up `APScheduler` to run the expiration check automatically on a daily basis.
+- Isolated inbox processing and collision-safe archiving.
+- One-time and daily expiration checks with minimal desktop notifications.
+- Windows Scheduled Task installation and offline-safe runner scripts.
 
-### Phase 5: Pipeline Automation
-**Status: Implemented.**
+### Phase 5: Local dashboard and review workflow
 
-*   Establish the `data/inbox` directory structure.
-*   Implement a startup scanner that processes the files currently in the inbox folder.
-*   Connect the full pipeline: new file detected -> OCR -> Hybrid LLM Understanding -> MongoDB Insertion -> Move file to `data/processed`.
+**Status: Implemented for single-user loopback deployment.**
 
-## 5. Known Edge Cases to Handle
-*   **LLM Hallucinations & Unstructured Date Formats:** The LLM might return inconsistent dates inside both standard metadata and dynamic fields. Strict Pydantic validators/custom parsers must clean and convert dates to `datetime` objects before database insertion.
-*   **Inconsistent Dynamic Key Naming:** Different runs on similar documents might generate slightly different keys in `extracted_data` (e.g., `tax_code` vs `fiscal_code`). System prompts must enforce clear naming conventions (snake_case, English keys).
-*   **Hardware Constraints:** Processing large PDFs locally can lead to CPU throttling. The processing logic should handle files asynchronously or implement page-by-page extraction limits.
-*   **Data Hygiene:** Any temporary image files generated during PDF-to-image conversion must be deleted immediately after OCR extraction.
+- FastAPI dashboard bound only to IPv4 or IPv6 loopback with one worker.
+- 25 MB uploads, durable single-worker processing, restart recovery, and safe status.
+- Explicit correction and confirmation before persistence, indexing, and archiving.
+- Browsing, exact filters, expiration status, validated edits, durable metadata-index
+  refreshes, and on-demand indexed-content inspection without embeddings.
+- Coordinated deletion from MongoDB and the active ChromaDB collection.
 
-## 6. Future Extensions (Scaling the Vault)
-*   **RAG Implementation (Chat with your Documents): Implemented.** Extracted text, summaries, and dynamic JSON values are embedded by a loopback-only Ollama model and persisted by a Dockerized ChromaDB server exposed only on loopback for grounded natural-language queries across all document types.
-*   **Local Web Dashboard:** Build a `Streamlit` or `FastAPI` interface to visualize documents, query dynamic JSON attributes, handle file uploads, and display color-coded expiration alerts.
+## 5. Current priorities
+
+1. Add a supported bulk reconciliation and reindex workflow.
+2. Define and implement archived-source deletion and backup-retention policy.
+3. Extend deletion and reconciliation across every embedding-model collection.
+4. Add decoded-file signature validation and stronger browser controls such as CSRF,
+   explicit host/origin checks, and restrictive security headers.
+5. Add dashboard RAG questions and pagination without weakening privacy boundaries.
+6. Introduce schema versioning and tested migration procedures.
+
+## 6. Known limitations
+
+- MongoDB and ChromaDB do not provide a shared transaction; compensation reduces but
+  cannot eliminate partial-failure risk.
+- CLI metadata updates do not refresh ChromaDB. Dashboard edits refresh only summary
+  and structured fragments in the active collection.
+- Dashboard deletion leaves archived sources, backups, and other model collections.
+- The dashboard has no authentication or hardened LAN/reverse-proxy deployment mode.
+- Pending-confirmation manifests contain raw extracted text and require the same host
+  protection as the databases.
+- Local OCR and model results can be incomplete or inaccurate and require review.

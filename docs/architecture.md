@@ -40,7 +40,9 @@ designed to call a remote service.
 | `controllers` | CLI use-case coordination and presentation decisions |
 | `cli` | Argument parsing, dependency assembly, and JSON serialization |
 | `inbox.py` | Supported-file discovery and collision-safe archiving |
+| `mutation_pipeline.py` | Coordinated MongoDB/ChromaDB confirmation, update, and deletion |
 | `scheduler.py` | Daily foreground scheduling |
+| `web` | FastAPI routes, durable jobs, schemas, templates, and static assets |
 
 Domain models do not depend on MongoDB, ChromaDB, HTTP, or the CLI. Infrastructure
 adapters implement protocols from `interfaces` and are passed into workflows
@@ -59,11 +61,13 @@ flowchart TB
 
     subgraph Presentation[Presentation and composition]
         CLI[CLI<br/>arguments and JSON output]
+        Web[FastAPI dashboard<br/>routes and browser UI]
         Controllers[Workflow controllers<br/>dependency composition]
     end
 
     subgraph Application[Application orchestration]
-        Pipelines[Processing, inbox, RAG,<br/>storage, and expiration pipelines]
+        Pipelines[Processing, inbox, RAG,<br/>storage, mutation, and expiration pipelines]
+        Jobs[Durable single-worker<br/>upload and refresh jobs]
     end
 
     subgraph Domain[Domain and contracts]
@@ -91,7 +95,11 @@ flowchart TB
     end
 
     User --> CLI
+    User --> Web
     CLI --> Controllers
+    Web --> Jobs
+    Web --> Pipelines
+    Jobs --> Pipelines
     Controllers --> Pipelines
     Controllers --> Scheduler
     Pipelines --> Interfaces
@@ -314,22 +322,26 @@ FastAPI is an inbound adapter over the same application services, not a place
 for OCR, persistence, or business rules. The browser and API server must bind to
 loopback by default.
 
-The target modules are conceptually:
+The implemented web modules are:
 
 ```text
 src/smart_doc_tracker/
-├── api/              # routes, request/response schemas, local web security
-├── application/      # use cases shared by CLI and API
-├── jobs/             # bounded local background-job execution and status
-└── web/              # static assets or server-rendered templates
+├── mutation_pipeline.py # coordinated persistence/index mutations
+└── web/
+    ├── app.py           # composition root and local HTTP routes
+    ├── jobs.py          # durable single-worker upload processing
+    ├── index_jobs.py    # durable metadata-index refreshes
+    ├── pending.py       # durable review staging
+    ├── schemas.py       # browser-safe response schemas
+    ├── templates/       # server-rendered dashboard shell
+    └── static/          # local CSS and JavaScript modules
 ```
 
-Document upload is long-running and should return a local job identifier. The job
-state should progress through queued, extracting, parsing, storing, indexing,
-completed, failed, or cancelled. Job records must not contain raw document text.
-Process-local background tasks are acceptable for a single-process prototype; a
-durable local queue is required before multiple workers or restart recovery are
-supported.
+Document upload returns a local job identifier. Durable states progress through
+`queued`, `extracting`, `parsing`, `awaiting_confirmation`, or `failed`. Job manifests
+contain identifiers, sanitized filenames, language, timestamps, status, and a local
+queue filename, but no OCR text. Pending-confirmation manifests contain the raw text
+and validated data required to complete indexing after restart.
 
 The implemented application surface includes:
 
@@ -337,23 +349,23 @@ The implemented application surface includes:
 - list, filter, and view validated document records;
 - query exact dynamic fields;
 - show in-app expiration notices without placing sensitive fields in browser logs;
+- review, edit, confirm, or reject parsed uploads before persistence;
+- update metadata and durably refresh summary and structured index fragments;
+- inspect indexed content without returning embeddings;
+- delete active-collection fragments, MongoDB sections, and the primary record through
+  one coordinated mutation service.
 
-Editing, RAG queries, coordinated deletion, and durable job recovery remain outside
-the current dashboard scope.
-
-Deletion must be implemented behind new repository and vector-index interfaces. A
-single use case should remove MongoDB sections, vector fragments, the primary record,
-and, only when explicitly managed by the application, the archived source file.
-Failures must return a recoverable partial-deletion state or enqueue reconciliation;
-routes must never issue independent best-effort deletes.
+RAG questions, pagination, bulk reconciliation, multi-collection deletion, and
+archived-source deletion remain outside the current dashboard scope. Mutation
+operations use snapshots and compensating actions, but cross-store atomicity is not
+available and incomplete compensation still requires operator intervention.
 
 ## Dependency and deployment boundaries
 
 The current Docker Compose deployment runs MongoDB and ChromaDB with named volumes
 and host ports bound to `127.0.0.1`. Ollama and Tesseract are host dependencies. The
-planned FastAPI server should initially remain a host process bound to
-`127.0.0.1`, keeping access to Tesseract, Ollama, desktop notifications, and managed
-folders explicit.
+FastAPI server is a host process bound to `127.0.0.1` by default, keeping access to
+Tesseract, Ollama, and managed folders explicit.
 
 Running multiple API workers is not supported until job ownership, scheduler
 leadership, and concurrent deletion/indexing semantics are designed. One local

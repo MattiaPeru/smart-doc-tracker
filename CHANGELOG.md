@@ -11,6 +11,14 @@ and the project intends to follow [Semantic Versioning](https://semver.org/).
 
 - On-demand display of complete per-document ChromaDB content in the local dashboard,
   excluding embeddings.
+- Loopback-only FastAPI dashboard with document browsing, exact dynamic-field filters,
+  expiration status, and validated editing.
+- Durable single-worker upload processing with restart recovery, explicit review,
+  correction, confirmation, rejection, and collision-safe source archiving.
+- Durable background refresh of summary and structured ChromaDB fragments after web
+  edits.
+- Coordinated dashboard deletion of MongoDB documents and sections plus fragments in
+  the active ChromaDB collection, with compensating rollback where possible.
 
 ### Changed
 
@@ -21,10 +29,10 @@ and the project intends to follow [Semantic Versioning](https://semver.org/).
 
 ### Planned
 
-- A loopback-only FastAPI web application.
-- Asynchronous document upload and processing with visible job status.
-- Document browsing and validated search from the web interface.
-- In-application expiration notifications.
+- Natural-language document questions from the dashboard.
+- Pagination and richer browsing controls.
+- Browser hardening beyond the current loopback-only deployment assumption.
+- Full reconciliation and reindex commands across configured embedding collections.
 - Coordinated deletion from MongoDB, ChromaDB, and the managed document archive.
 
 Planned items are not part of the current release and may change before delivery.

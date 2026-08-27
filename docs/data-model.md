@@ -105,29 +105,40 @@ MongoDB is authoritative for validated records and expiration queries. ChromaDB 
 derived search index. The current workflow writes MongoDB before ChromaDB and has no
 cross-database transaction. Reconciliation and supported full reindexing are planned.
 
-The current metadata update path does not reindex ChromaDB. Consumers must treat
-semantic results as potentially stale after an update.
+CLI metadata updates do not reindex ChromaDB. Dashboard updates durably queue a
+refresh of the summary and structured-data fragments in the active collection; raw
+text is preserved. Failed refresh jobs can still leave semantic results stale.
 
-## Planned FastAPI schemas
+Dashboard confirmation compensates a failed new insert by deleting the new MongoDB
+record, sections, and active-collection fragments where possible. Dashboard deletion
+snapshots active-collection fragments, deletes them and the MongoDB record plus
+sections, and restores the Chroma snapshot if the MongoDB operation fails. Archived
+source files, backups, and collections created for other embedding models are outside
+these live mutation boundaries.
 
-HTTP request and response schemas must be separate from persistence records. They may
-reuse domain validation but must not expose MongoDB internals, host paths, raw model
-responses, or arbitrary query operators.
+## FastAPI schemas and durable local state
 
-Recommended resource shapes include:
+HTTP response schemas are separate from persistence records. They reuse domain
+validation without exposing file hashes, host paths, raw model responses, embeddings,
+or arbitrary MongoDB operators.
 
-- `DocumentSummary`: ID, normalized envelope fields, and safe status information;
-- `DocumentDetail`: validated document plus explicit source-file availability;
-- `DocumentUpdate`: optional validated editable fields;
-- `ProcessingJob`: opaque ID, state, timestamps, safe error category, and progress;
-- `DocumentQuestion`: bounded question and retrieval limit;
-- `DocumentAnswer`: answer and existing source document IDs;
-- `DeletionRequest`: explicit source-file choice and confirmation token;
-- `DeletionResult`: per-representation outcome without sensitive content.
+Implemented resource shapes include:
+
+- `DocumentResponse`: ID, validated document fields, creation time, and expiration
+  status;
+- `DocumentUpdateResponse`: the stored document plus an opaque index-refresh ID;
+- `UploadJobResponse`: opaque ID, sanitized filename, timestamps, safe status, and a
+  generic failure message;
+- `PendingDocumentResponse`: validated editable data without raw text or local paths;
+- `IndexUpdateJobResponse`: opaque refresh ID and status only;
+- `DocumentIndexedContentResponse`: fragment IDs, categories, and content, explicitly
+  excluding embeddings.
 
 Uploaded filenames are presentation metadata, not trusted filesystem paths. Job
-records must not store OCR text. Database filtering must use an allow-listed query
-model rather than accepting raw MongoDB dictionaries from the browser.
+manifests do not store OCR text. Pending-confirmation manifests do store raw text and
+validated data locally because confirmation can happen after a restart. Database
+filtering accepts only validated dot-separated `snake_case` paths and exact
+JSON-compatible values, never raw MongoDB dictionaries.
 
 ## Evolution and migration
 

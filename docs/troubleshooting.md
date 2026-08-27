@@ -97,8 +97,10 @@ If MongoDB contains a document but RAG cannot find it, indexing may have failed 
 the MongoDB write. There is currently no supported bulk reindex command. Reprocessing
 the exact file can upsert its index, provided the required local services are healthy.
 
-After a metadata update, semantic search may still contain the originally indexed
-summary and structured payload. This is a known current consistency limitation.
+After a CLI metadata update, semantic search may still contain the originally indexed
+summary and structured payload. A dashboard edit queues a refresh of those fragments;
+check the UI's update status and restart the single web process if a durable refresh
+was interrupted. There is still no supported bulk reconciliation command.
 
 ## Inbox files do not move
 
@@ -136,12 +138,22 @@ Confirm that:
 Run `scripts\run_expiration_check.ps1` manually from a private terminal to obtain a
 sanitized error. Reinstalling the task updates its configuration.
 
-## Planned FastAPI problems
+## Dashboard uploads or updates are stuck
 
-The web service is not implemented. When it is added, troubleshooting must cover job
-queue saturation, abandoned uploads, browser origin or CSRF rejection, partial
-deletion, stale indexing, and restart recovery. API access logs must be configured so
-uploaded filenames, search queries, and document identifiers are not recorded.
+Confirm MongoDB, ChromaDB, Ollama, Tesseract, and the configured OCR language are
+available, then restart `smart-doc-tracker-web`. The single-worker queues in
+`data/processing_queue` and `data/index_update_queue` resume unfinished work. Parsed
+documents awaiting review are restored from `data/pending_confirmation`.
+
+Do not manually edit queue manifests: pending manifests contain sensitive extracted
+content, while processing and index-update manifests intentionally contain only the
+minimum metadata needed for recovery. A failed upload remains in the queue until it
+is dismissed in the dashboard. If an index refresh remains failed, the MongoDB edit
+is authoritative but semantic results can be stale; there is no bulk reindex command.
+
+The dashboard is designed only for same-host loopback access. It does not currently
+provide authentication, CSRF tokens, or a hardened multi-user deployment profile.
+Do not expose it to a LAN or reverse proxy.
 
 ## Requesting support
 

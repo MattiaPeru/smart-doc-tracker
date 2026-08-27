@@ -36,8 +36,13 @@ They must be completed separately before operating in an offline environment. Se
 - Inbox processing with collision-safe archiving.
 - Document listing, retrieval, and validated updates.
 - Expiration checks, desktop notifications, and Windows Task Scheduler integration.
+- Loopback-only dashboard with durable, single-worker upload processing.
+- Review and correction of extracted data before storage and indexing.
+- Exact dynamic-field filtering, indexed-content inspection, synchronized metadata
+  updates, and coordinated record deletion from MongoDB and ChromaDB.
 
-Document deletion is not implemented yet.
+The dashboard does not yet expose natural-language questions, pagination, or deletion
+of archived source files. The CLI does not provide a delete command.
 
 ## Requirements
 
@@ -100,8 +105,15 @@ smart-doc-tracker-web
 ```
 
 Open `http://127.0.0.1:8080`. The server only accepts a loopback bind address, uses
-one upload worker, and removes each temporary upload copy after processing. Uploaded
-PDF and image files are parsed and stored through the same local pipeline as the CLI.
+one upload worker, and durably resumes interrupted queued work after restart. Uploaded
+PDF and image files are parsed locally, then staged for review. They are stored,
+indexed, and archived only after explicit confirmation; rejection removes the staged
+copy. Uploads are limited to 25 MB.
+
+Dashboard edits update MongoDB immediately and queue a durable refresh of the summary
+and structured-data fragments in ChromaDB. Dashboard deletion removes MongoDB metadata
+and PDF sections plus the active ChromaDB collection's fragments, but deliberately
+leaves archived source files and backups untouched.
 
 ## Common commands
 

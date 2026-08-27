@@ -2,9 +2,8 @@
 
 ## Scope
 
-This guide covers the implemented command-line application. The final section
-describes the planned FastAPI web interface and must not be interpreted as current
-functionality.
+This guide covers the implemented command-line application and the loopback-only
+FastAPI dashboard. Both use the same local services and validated domain model.
 
 ## Prepare the local services
 
@@ -103,9 +102,10 @@ smart-doc-tracker --update-stored DOCUMENT_ID --extracted-data-json '{"policy_nu
 ```
 
 Dynamic keys must use English `snake_case`. Updates preserve the source hash and
-creation timestamp. The current update command does not rebuild the Chroma index;
-semantic results may therefore reflect the originally indexed data until a future
-reconciliation command is implemented.
+creation timestamp. CLI updates do not rebuild the Chroma index; semantic results may
+therefore reflect the originally indexed data. Dashboard edits instead queue a
+durable refresh of the summary and structured-data fragments while preserving the
+original raw-text fragments.
 
 Deletion is not available in the current CLI.
 
@@ -154,24 +154,40 @@ with status `2` for syntax errors.
 
 ## Local web interface
 
-The local FastAPI application provides:
+Start the local dashboard:
+
+```powershell
+smart-doc-tracker-web
+```
+
+Use `--host ::1` for IPv6 loopback or `--port PORT` to select another local port.
+Public bind addresses are rejected and Uvicorn always runs one worker. Open
+`http://127.0.0.1:8080` by default.
+
+The implemented dashboard provides:
 
 - drag-and-drop document upload;
-- asynchronous progress and failure status;
-- paginated document browsing and detail views;
+- durable single-worker processing with visible extraction, parsing, and failure
+  status;
+- review and correction of validated extracted data before it is committed;
+- document browsing and detail views;
 - on-demand display of every summary, structured-data, and raw-text fragment
   stored for a document in local ChromaDB;
-- validated edits and exact database filters;
-- local natural-language questions with source links;
-- an expiration dashboard and minimal in-app notifications;
-- confirmed document deletion with an explicit description of affected data.
+- validated edits with durable background refresh of indexed metadata;
+- exact dynamic-field filters;
+- expiration status and in-page alerts;
+- confirmed deletion from MongoDB and the active ChromaDB collection.
 
-The application supports one user on the same host and binds only to loopback.
-Uploading a document will return immediately to a job-status view while OCR, parsing,
-storage, and indexing continue through a bounded local worker. Closing the browser
-does not silently discard an accepted job.
+Uploads accept supported images and PDFs up to 25 MB. The server copies an accepted
+upload into `data/processing_queue`, resumes interrupted queued work after restart,
+and moves a successful parse into `data/pending_confirmation`. Pending manifests
+contain the validated data and raw extracted text required for later indexing, so
+protect these folders like the databases. Confirming stores and indexes the document,
+then archives its source under `data/processed`; rejecting removes the staged source.
+Failed jobs remain locally available until dismissed from the queue.
 
-Before confirming deletion, the UI must state whether the archived original file is
-also removed and whether a backup may retain a copy. A successful result must mean
-that MongoDB metadata and sections, Chroma fragments, and selected managed files have
-all been handled according to policy.
+Dashboard deletion removes the primary MongoDB record, its PDF sections, and all
+fragments for that document in the currently configured Chroma collection. It does
+not remove `data/processed` files, other embedding-model collections, or backups.
+Natural-language questions and pagination remain CLI-only or unavailable in the
+dashboard.

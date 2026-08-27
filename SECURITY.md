@@ -28,7 +28,7 @@ usernames, absolute personal paths, or screenshots containing personal data.
 
 ## Security expectations
 
-- MongoDB, ChromaDB, Ollama, and the planned FastAPI server must bind only to
+- MongoDB, ChromaDB, Ollama, and the FastAPI server must bind only to
   loopback by default.
 - Local endpoints must reject credentials, remote hosts, HTTPS proxies, URL paths,
   query strings, and implicit ports unless a reviewed design explicitly changes the

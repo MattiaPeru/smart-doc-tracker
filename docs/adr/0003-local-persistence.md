@@ -10,8 +10,8 @@ idempotent ingestion, and semantic retrieval. Original documents and derived dat
 sensitive. One persistence engine does not serve both structured queries and vector
 similarity equally well.
 
-The planned FastAPI application adds browsing, filtering, asynchronous job state, and
-deletion requirements.
+The FastAPI application adds browsing, filtering, durable asynchronous job state, and
+coordinated live-record deletion requirements.
 
 ## Decision
 
@@ -23,10 +23,12 @@ Use loopback-only ChromaDB as a derived vector index. Keep original or archived 
 in controlled local folders rather than inside MongoDB. Bind Docker ports explicitly
 to `127.0.0.1` and persist databases in named local volumes.
 
-The future web application will access these stores through repository interfaces.
-It will not accept arbitrary MongoDB queries from clients. Job persistence, schema
-versioning, reindexing, and coordinated deletion must be designed before the web
-interface is production-ready.
+The web application accesses these stores through repository and vector-index
+interfaces. It does not accept arbitrary MongoDB queries from clients. Upload and
+index-refresh jobs persist minimal recovery metadata on local disk; pending review
+state additionally persists raw and structured content. Schema versioning, bulk
+reindexing, cross-collection reconciliation, and archived-source deletion remain
+follow-up work.
 
 ## Consequences
 
@@ -52,6 +54,5 @@ also depends on access to managed source files and repeatable extraction.
 
 - Add schema versioning and supported migrations.
 - Add a full reconciliation and reindex workflow.
-- Add repository methods for deleting primary records and sections.
-- Add vector-index deletion across every embedding-model collection.
+- Extend deletion beyond the active collection to every embedding-model collection.
 - Define source-file ownership and backup retention before exposing deletion.

@@ -47,7 +47,7 @@ class WindowsSchedulerScriptTests(TestCase):
     def test_runner_reports_failures_and_waits_only_when_requested(self) -> None:
         script = RUNNER_SCRIPT_PATH.read_text(encoding="utf-8")
 
-        self.assertIn('[switch]$WaitForInput', script)
+        self.assertIn("[switch]$WaitForInput", script)
         self.assertIn('Write-Host ("Reason: {0}"', script)
         self.assertIn('Read-Host "Press Enter to close"', script)
         self.assertIn("if ($WaitForInput)", script)

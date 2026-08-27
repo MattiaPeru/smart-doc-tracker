@@ -24,9 +24,9 @@ Reject answers that cite document IDs outside the retrieved context.
 Use deterministic MongoDB queries instead of RAG when a question can be safely
 recognized as a calendar-year expiration query.
 
-The planned web interface will expose the same bounded question use case and link
-answers to existing local document views. It must not log questions or retrieved
-content.
+The current web interface exposes indexed-content inspection but not the bounded
+question use case. A future dashboard question flow must link answers to existing
+local document views and must not log questions or retrieved content.
 
 ## Consequences
 
@@ -42,7 +42,8 @@ Costs and limitations:
 - embeddings and raw fragments are sensitive persisted data;
 - answers can still be incomplete or inaccurate;
 - changing an embedding model creates a separate empty collection;
-- current updates do not automatically refresh the vector index;
+- CLI updates do not refresh the vector index; dashboard edits durably refresh the
+  summary and structured fragments but preserve raw-text fragments;
 - MongoDB and ChromaDB can diverge after partial failures;
 - prompt-injection defenses reduce risk but do not guarantee model behavior.
 

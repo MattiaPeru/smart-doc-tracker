@@ -10,15 +10,15 @@ other potentially sensitive files. Hosted OCR, language models, telemetry, and r
 storage would transmit content outside the user's machine and complicate consent,
 retention, and regulatory controls.
 
-A planned FastAPI interface introduces an HTTP server and browser, but it does not
-change the privacy objective.
+The FastAPI interface introduces an HTTP server and browser, but it does not change
+the privacy objective.
 
 ## Decision
 
 All document ingestion, OCR, parsing, validation, persistence, retrieval, generation,
 notification, and scheduling will operate on one local host.
 
-MongoDB, ChromaDB, Ollama, and the future FastAPI server must use explicit loopback
+MongoDB, ChromaDB, Ollama, and the FastAPI server must use explicit loopback
 bindings by default. The application will reject remote service endpoints and will
 not include cloud services, hosted models, analytics, telemetry, remote storage, or
 remote fallbacks.
@@ -26,7 +26,7 @@ remote fallbacks.
 Dependencies and models may be downloaded only as a separate, operator-controlled
 installation activity. Normal scheduled execution must not download resources.
 
-The web interface will be a local inbound adapter over the same application services.
+The web interface is a local inbound adapter over the same application services.
 LAN or Internet exposure is not supported by this decision and requires a new threat
 model and superseding ADR.
 

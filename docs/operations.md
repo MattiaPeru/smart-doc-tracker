@@ -6,8 +6,9 @@ Version 0.1.0 is a single-host application. Python, Tesseract, Ollama, and the C
 on the host. Docker Compose runs MongoDB and ChromaDB with named volumes and ports
 bound to `127.0.0.1`.
 
-The planned FastAPI service must also bind to `127.0.0.1` by default and run as a
-single application process until durable job coordination is implemented.
+The FastAPI dashboard runs on the host, binds to `127.0.0.1` by default, and uses one
+application process. Upload and index-refresh jobs are durable on local disk but are
+not coordinated across multiple processes.
 
 ## Start and stop
 
@@ -36,6 +37,15 @@ databases has been explicitly approved and a verified backup exists when require
 Start Ollama using the host's normal service mechanism. Health and model checks must
 not trigger automatic downloads in offline operation.
 
+Start the dashboard after the local services are healthy:
+
+```powershell
+smart-doc-tracker-web
+```
+
+The default URL is `http://127.0.0.1:8080`. Only `127.0.0.1` and `::1` are accepted
+by `--host`; `--port` accepts values from 1 through 65535. Run exactly one process.
+
 ## Health checks
 
 ```powershell
@@ -44,9 +54,9 @@ docker compose exec -T mongodb mongosh --quiet --eval "db.adminCommand('ping').o
 ```
 
 ChromaDB has a Compose health check. A complete smoke test uses a synthetic document,
-verifies storage and a local question, and then removes the synthetic data through an
-approved maintenance procedure. Document deletion is not yet implemented, so avoid
-using real data for disposable smoke tests.
+verifies storage and a local question, and then deletes the live record through the
+dashboard. The archived synthetic source remains under `data/processed` and must be
+removed separately through an approved, path-verified maintenance procedure.
 
 ## Windows Scheduled Task
 
@@ -75,6 +85,8 @@ Back up all authoritative representations together:
 - MongoDB database `smart_doc_tracker`;
 - every ChromaDB collection used by configured embedding models;
 - `data/processed` or the configured archive directory;
+- `data/processing_queue`, `data/pending_confirmation`, and
+  `data/index_update_queue` while the dashboard has unfinished work;
 - local configuration needed to reproduce model and service choices.
 
 MongoDB can be exported with `mongodump` from the local container or a compatible
@@ -118,29 +130,25 @@ so a company deployment should additionally maintain a reviewed lock file.
 
 ## Retention and deletion
 
-Live record deletion is not implemented. Do not manually delete only MongoDB records,
-because raw fragments may remain searchable in ChromaDB and archived files may remain
-on disk. Until coordinated deletion exists, use a documented administrator procedure
-that identifies every representation and records any partial failure.
+Dashboard deletion coordinates the active ChromaDB collection with the MongoDB
+document and its section records. It does not delete archived source files, backups,
+or fragments in collections associated with other embedding-model configurations.
+The CLI has no deletion command.
 
-When FastAPI deletion is delivered, operations must define:
+Before deletion, verify which embedding model is configured. Afterward, retain or
+remove the archived source according to the local retention policy using an explicit,
+path-verified procedure. A complete production policy still needs backup expiry,
+cross-collection reconciliation, source-file ownership, and privacy-safe audit rules.
 
-- whether source archives are managed by the application;
-- soft-delete or immediate hard-delete policy;
-- backup retention and expiry;
-- reconciliation for partial cross-store failures;
-- audit events that contain IDs and outcomes but no document contents.
+## Dashboard operations
 
-## Planned FastAPI service
+The server enforces a 25 MB upload limit and one processing worker. Accepted upload,
+pending-confirmation, and index-refresh state survives a normal restart in local data
+folders. Shutdown waits for accepted in-process jobs, so allow it to complete.
 
-Run the future server with one worker and an explicit loopback bind. The exact command
-will be documented only when the API package exists. Do not publish a speculative
-production command or expose port `8000` broadly; ChromaDB already uses that port in
-the current Compose file.
-
-Operational readiness for the web release requires bounded upload size, background
-job limits, graceful shutdown, restart recovery, health/readiness endpoints without
-sensitive data, access-log redaction, and exactly one active expiration scheduler.
+There is no supported multi-worker deployment, bulk reindex command, health/readiness
+API, authentication layer, or hardened reverse-proxy profile. Do not expose port 8080
+outside loopback; port 8000 belongs to ChromaDB in the Compose configuration.
 
 ## Monitoring
 

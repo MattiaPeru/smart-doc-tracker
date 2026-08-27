@@ -7,7 +7,7 @@ notifications, and orchestration.
 ## Before starting
 
 Open an issue or design discussion for changes that affect persisted schemas,
-privacy boundaries, public CLI behavior, planned HTTP APIs, or deletion semantics.
+privacy boundaries, public CLI or HTTP behavior, or deletion semantics.
 Record durable architectural choices as an ADR under `docs/adr`.
 
 Never commit real documents, OCR text, personal information, credentials, database
@@ -38,13 +38,13 @@ manual tests.
 - Accept local services only through validated loopback endpoints.
 - Do not log document contents or sensitive fields.
 - Clean temporary files deterministically, including after exceptions.
-- Keep the CLI and planned FastAPI adapter thin; business workflows belong in
+- Keep the CLI and FastAPI adapter thin; business workflows belong in
   application pipelines or controllers.
 
-The future web application must not call CLI commands as subprocesses. It should
-invoke the same typed application services used by the CLI. Long-running OCR,
-parsing, and indexing operations must expose explicit job state and bounded local
-concurrency.
+The web application must not call CLI commands as subprocesses. It invokes typed
+application services directly. Keep long-running OCR, parsing, and indexing behind
+explicit durable job state and bounded local concurrency; do not add additional web
+workers without a tested cross-process claiming design.
 
 ## Quality checks
 

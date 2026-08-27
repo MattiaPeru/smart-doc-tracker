@@ -10,30 +10,33 @@ python -m pip install -r requirements-dev.txt
 ```
 
 The package uses the `src` layout, targets Python 3.11 or newer, and exposes
-`smart-doc-tracker` through `smart_doc_tracker.main:run`.
+`smart-doc-tracker` through `smart_doc_tracker.main:run` plus `smart-doc-tracker-web`
+through `smart_doc_tracker.web.app:run`.
 
 ## Repository layout
 
 ```text
 src/smart_doc_tracker/
-├── cli/              # arguments, dependency container, JSON serialization
-├── controllers/      # CLI use-case coordination
-├── core/             # OCR, PDF, hashing, parsing
-├── db/               # MongoDB and ChromaDB adapters
-├── infrastructure/   # local Ollama transport
-├── interfaces/       # typed protocols
-├── models/           # domain and RAG models
-├── notifier/         # local notification adapter
-├── inbox.py          # local file discovery and archiving
-├── pipeline.py       # cross-component workflows
-└── scheduler.py      # daily scheduling
+|-- cli/                 # arguments, dependency container, JSON serialization
+|-- controllers/         # CLI use-case coordination
+|-- core/                # OCR, PDF, hashing, parsing
+|-- db/                  # MongoDB and ChromaDB adapters
+|-- infrastructure/      # local Ollama transport
+|-- interfaces/          # typed protocols
+|-- models/              # domain and RAG models
+|-- notifier/            # local notification adapter
+|-- web/                 # FastAPI routes, durable jobs, templates, static assets
+|-- inbox.py             # local file discovery and archiving
+|-- mutation_pipeline.py # coordinated MongoDB/ChromaDB mutations
+|-- pipeline.py          # cross-component workflows
+`-- scheduler.py         # daily scheduling
 ```
 
 ## Adding behavior
 
 Start from a domain or application use case. Define the smallest interface required
 by that use case, implement infrastructure behind it, inject the dependency, and keep
-presentation logic in the CLI or planned API adapter.
+presentation logic in the CLI or FastAPI adapter.
 
 Examples:
 
@@ -60,30 +63,27 @@ For every dependency or code path, verify:
 Dependencies with hidden remote behavior are not acceptable. Local-only endpoints
 must fail closed.
 
-## Planned FastAPI development
+## FastAPI development
 
-The web adapter should depend on shared application services, not on CLI controllers
-or subprocess execution. Route functions should perform HTTP parsing, authorization,
-and response mapping only.
+The web adapter depends on shared typed services, not CLI subprocesses. Keep route
+functions focused on HTTP parsing and response mapping; business sequencing belongs
+in processing or mutation services.
 
-Use asynchronous endpoints for efficient HTTP handling, but move blocking OCR,
-PyMuPDF, Ollama, MongoDB, and Chroma work to a bounded execution layer. `async def`
-alone does not make blocking work asynchronous. Define cancellation and shutdown
-behavior before accepting jobs.
+Blocking OCR, PyMuPDF, Ollama, MongoDB, and Chroma work must remain behind bounded
+execution. `async def` alone does not make blocking work asynchronous. The current
+single-process design uses one upload worker and one index-refresh worker.
 
-Recommended implementation sequence:
+Upload sources and metadata are persisted under `data/processing_queue`, review data
+under `data/pending_confirmation`, and refresh metadata under
+`data/index_update_queue`. Preserve atomic manifest replacement, sanitized public
+errors, explicit confirmation, restart recovery, and deterministic cleanup when
+changing these workflows. Pending manifests intentionally contain sensitive raw and
+structured content; job and refresh manifests must not.
 
-1. extract CLI-independent application service factories;
-2. define upload, query, notification, and deletion use cases;
-3. extend repository protocols with coordinated deletion and reindex support;
-4. create typed API schemas that do not leak persistence objects;
-5. implement a durable local job model or explicitly document prototype limits;
-6. add loopback-only server configuration and browser security controls;
-7. build the web UI against versioned local endpoints;
-8. add end-to-end offline tests.
-
-Do not run more than one worker until job claiming, scheduler leadership, and
-concurrent store/index/delete rules are tested.
+Next priorities are decoded-content validation, explicit browser security controls,
+bulk reconciliation/reindexing, and a documented archived-source deletion policy.
+Do not run more than one web process until cross-process job claiming and concurrent
+store/index/delete rules are designed and tested.
 
 ## Documentation changes
 
