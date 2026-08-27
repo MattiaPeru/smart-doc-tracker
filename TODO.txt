@@ -1,2 +1,1 @@
 - Add the chat to the web site.
-- Make a simple script to send http request and simulate an attack.
