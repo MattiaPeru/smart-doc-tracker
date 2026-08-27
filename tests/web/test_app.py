@@ -288,10 +288,15 @@ class WebApplicationTests(TestCase):
         self.assertIn('fieldInput.className = "grouped-list-key"', script.text)
         self.assertIn("groupedSingleFieldItems(value).forEach", script.text)
         self.assertIn('fieldDetails.className = "grouped-list-field"', script.text)
+        self.assertIn('removeButton.className = "secondary compact grouped-list-remove"', script.text)
+        self.assertIn("fieldDetails.remove()", script.text)
         self.assertIn("updateGroupedListSummary", script.text)
         self.assertIn("records.sort", script.text)
         self.assertIn(".grouped-list-row", self.client.get("/static/dashboard.css").text)
         self.assertIn(".grouped-list-field > summary", self.client.get("/static/dashboard.css").text)
+        self.assertIn(".grouped-list-remove", self.client.get("/static/dashboard.css").text)
+        self.assertIn("grid-template-columns: minmax(0, 1fr) auto", self.client.get("/static/dashboard.css").text)
+        self.assertIn("overflow-wrap: anywhere", self.client.get("/static/dashboard.css").text)
 
     def test_document_editor_allows_scrolling_long_nested_values(self) -> None:
         stylesheet = self.client.get("/static/dashboard.css")

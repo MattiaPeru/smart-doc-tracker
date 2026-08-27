@@ -195,11 +195,15 @@ pre { overflow: auto; border-radius: 8px; padding: 14px; background: #f1f2ef; wh
 .grouped-list-row { display: grid; grid-template-columns: minmax(110px, .8fr) minmax(160px, 1.4fr) 42px; gap: 8px; padding: 0 20px 10px; }
 .grouped-list-row .compact-list-editor { grid-column: 2 / 4; }
 .grouped-list-rows { display: grid; gap: 8px; }
-.grouped-list-field { overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: white; }
-.grouped-list-field > summary { padding: 10px 12px; color: var(--accent-dark); font-weight: 700; cursor: pointer; user-select: none; }
+.grouped-list-field { position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: white; }
+.grouped-list-field > summary { padding: 10px 58px 10px 12px; color: var(--accent-dark); font-weight: 700; cursor: pointer; user-select: none; }
 .grouped-list-field[open] > summary { border-bottom: 1px solid var(--line); }
-.grouped-list-field-summary { display: inline-grid; grid-template-columns: minmax(110px, .8fr) minmax(160px, 1.4fr); gap: 8px; width: calc(100% - 12px); margin-left: 4px; }
+.grouped-list-field-summary { display: inline-grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; width: calc(100% - 12px); margin-left: 4px; }
+.grouped-list-field-summary > :first-child { min-width: 0; overflow-wrap: anywhere; }
+.grouped-list-field-summary > :last-child { white-space: nowrap; }
+.grouped-list-remove { position: absolute; top: 6px; right: 8px; z-index: 1; min-width: 38px; font-size: 1.2rem; }
 .grouped-list-field .grouped-list-row { padding-top: 10px; }
+.grouped-list-view-field > summary { padding-right: 12px; }
 .grouped-list-view-field > .attribute-view-row { margin: 0; border: 0; border-radius: 0; }
 .attribute-view { display: grid; gap: 8px; }
 .attribute-view-labels { grid-template-columns: minmax(150px, .8fr) minmax(220px, 1.4fr); }

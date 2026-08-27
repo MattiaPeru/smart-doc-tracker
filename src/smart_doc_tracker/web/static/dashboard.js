@@ -465,8 +465,15 @@ function addGroupedListRow(container, node, itemField, items) {
   fieldInput.className = "grouped-list-key";
   fieldInput.setAttribute("aria-label", "Field name");
   fieldInput.value = itemField;
+  const removeButton = document.createElement("button");
+  removeButton.className = "secondary compact grouped-list-remove";
+  removeButton.type = "button";
+  removeButton.setAttribute("aria-label", `Remove ${itemField || "field"}`);
+  removeButton.textContent = "\u00d7";
   fieldInput.addEventListener("input", () => {
-    summaryKey.textContent = fieldInput.value.trim() || "New field";
+    const currentName = fieldInput.value.trim();
+    summaryKey.textContent = currentName || "New field";
+    removeButton.setAttribute("aria-label", `Remove ${currentName || "field"}`);
   });
   const list = document.createElement("div");
   list.className = "compact-list-editor";
@@ -487,7 +494,13 @@ function addGroupedListRow(container, node, itemField, items) {
   });
   list.append(addButton);
   groupedRow.append(fieldInput, list);
-  fieldDetails.append(fieldSummary, groupedRow);
+  removeButton.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    fieldDetails.remove();
+    updateContainerSummary(node);
+  });
+  fieldDetails.append(fieldSummary, removeButton, groupedRow);
   if (!itemField) fieldDetails.open = true;
   container.append(fieldDetails);
   updateGroupedListSummary(fieldDetails);
