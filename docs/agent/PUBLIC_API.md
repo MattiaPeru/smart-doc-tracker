@@ -1069,6 +1069,7 @@ Fields:
 - `upload_processor: UploadProcessor`
 - `today_provider: Callable[[], date] = date.today`
 - `vector_index: DocumentVectorIndex | None = None`
+- `rag_generator: TextGenerator | None = None`
 - `processed_path: Path = Path('data/processed')`
 - `repository_closer: Callable[[], None] | None = None`
 
@@ -1076,7 +1077,7 @@ Fields:
 
 - `create_app(dependencies: WebDependencies | None = None) -> FastAPI` — Create a testable local dashboard with injected application services.
 
-- `run(argv: Sequence[str] | None = None) -> None` — Run one local Uvicorn worker bound to loopback by default.
+- `run(argv: Sequence[str] | None = None) -> None` — Run the dashboard and own its required local service lifecycle.
 
 ## `smart_doc_tracker.web.index_jobs`
 
@@ -1151,6 +1152,36 @@ Methods:
 - `discard_failed(self, job_id: str) -> bool` — Remove one failed job and its owned local source file.
 - `close(self) -> None` — Finish accepted work while retaining durable queue state.
 
+## `smart_doc_tracker.web.local_services`
+
+Source: [`src/smart_doc_tracker/web/local_services.py`](../../src/smart_doc_tracker/web/local_services.py)
+
+Lifecycle management for services required by the local web dashboard.
+
+### `LocalServiceStartupError(RuntimeError)`
+
+Raised when a required loopback-only service cannot be started.
+
+### `LocalWebServiceManager`
+
+Start and stop only the local services owned by one web server run.
+
+Fields:
+
+- `project_root: Path = _PROJECT_ROOT`
+- `startup_timeout_seconds: float = 60.0`
+- `poll_interval_seconds: float = 0.25`
+- `command_executor: _CommandExecutor = _execute_command`
+- `process_launcher: _ProcessLauncher = _launch_process`
+- `port_probe: _PortProbe = _probe_loopback_port`
+- `sleeper: Callable[[float], None] = time.sleep`
+- `monotonic: Callable[[], float] = time.monotonic`
+
+Methods:
+
+- `start(self) -> None` — Start missing MongoDB, ChromaDB, and Ollama loopback services.
+- `stop(self) -> None` — Stop only services that were started by this manager instance.
+
 ## `smart_doc_tracker.web.pending`
 
 Source: [`src/smart_doc_tracker/web/pending.py`](../../src/smart_doc_tracker/web/pending.py)
@@ -1194,6 +1225,37 @@ Methods:
 Source: [`src/smart_doc_tracker/web/schemas.py`](../../src/smart_doc_tracker/web/schemas.py)
 
 HTTP response schemas for the local dashboard.
+
+### `ChatRequest(BaseModel)`
+
+One bounded natural-language question for the local document assistant.
+
+Fields:
+
+- `question: str = Field(min_length=1, max_length=4000)`
+
+### `ChatDocumentReference(BaseModel)`
+
+Browser-safe document citation attached to one grounded answer.
+
+Fields:
+
+- `id: str`
+- `document_type: str`
+- `summary: str`
+
+Methods:
+
+- `from_record(cls, record: StoredDocument) -> ChatDocumentReference` — Create a citation without exposing hashes or document contents.
+
+### `ChatResponse(BaseModel)`
+
+Grounded answer and the locally stored documents that support it.
+
+Fields:
+
+- `answer: str`
+- `documents: list[ChatDocumentReference]`
 
 ### `DocumentResponse(BaseModel)`
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..db.database import StoredDocument
 from ..models.document import DocumentData
@@ -13,6 +13,42 @@ from ..models.rag import IndexedDocumentFragment
 from .index_jobs import IndexUpdateJob
 from .jobs import UploadJob
 from .pending import PendingDocument
+
+
+class ChatRequest(BaseModel):
+    """One bounded natural-language question for the local document assistant."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    question: str = Field(min_length=1, max_length=4_000)
+
+
+class ChatDocumentReference(BaseModel):
+    """Browser-safe document citation attached to one grounded answer."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    document_type: str
+    summary: str
+
+    @classmethod
+    def from_record(cls, record: StoredDocument) -> ChatDocumentReference:
+        """Create a citation without exposing hashes or document contents."""
+        return cls(
+            id=record.id,
+            document_type=record.document.document_type,
+            summary=record.document.summary,
+        )
+
+
+class ChatResponse(BaseModel):
+    """Grounded answer and the locally stored documents that support it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    answer: str
+    documents: list[ChatDocumentReference]
 
 
 class DocumentResponse(BaseModel):

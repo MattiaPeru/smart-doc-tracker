@@ -10,8 +10,9 @@ from unittest import TestCase
 from fastapi.testclient import TestClient
 
 from smart_doc_tracker.db.database import DocumentInsertResult, StoredDocument
+from smart_doc_tracker.infrastructure.ollama import OllamaConnectionError
 from smart_doc_tracker.models.document import DocumentData
-from smart_doc_tracker.models.rag import IndexedDocumentFragment
+from smart_doc_tracker.models.rag import IndexedDocumentFragment, RetrievedDocumentChunk
 from smart_doc_tracker.pipeline import DocumentProcessingResult
 from smart_doc_tracker.web.app import WebDependencies, create_app
 
@@ -64,6 +65,14 @@ class FakeRepository:
             return self.records[:1]
         return []
 
+    def get_documents_expiring_in_year(self, year: int) -> list[StoredDocument]:
+        return [
+            item
+            for item in self.records
+            if item.document.expiry_date is not None
+            and item.document.expiry_date.year == year
+        ]
+
     def insert_document(
         self,
         document: DocumentData,
@@ -111,6 +120,7 @@ class FakeVectorIndex:
         self.upserts: list[tuple[str, str, DocumentData]] = []
         self.updates: list[tuple[str, DocumentData]] = []
         self.deletes: list[str] = []
+        self.query_results: list[RetrievedDocumentChunk] = []
 
     def upsert_document(
         self,
@@ -137,8 +147,13 @@ class FakeVectorIndex:
     def delete_document(self, document_id: str) -> None:
         self.deletes.append(document_id)
 
-    def query(self, question: str, *, limit: int = 5) -> list[Any]:
-        return []
+    def query(
+        self,
+        question: str,
+        *,
+        limit: int = 5,
+    ) -> list[RetrievedDocumentChunk]:
+        return self.query_results[:limit]
 
     def get_document_fragments(self, document_id: str) -> list[IndexedDocumentFragment]:
         return [
@@ -148,6 +163,23 @@ class FakeVectorIndex:
                 "raw_text",
             )
         ]
+
+
+class FakeGenerator:
+    def __init__(self) -> None:
+        self.questions: list[str] = []
+
+    def generate(self, *, system_prompt: str, user_prompt: str) -> str:
+        self.questions.append(user_prompt)
+        return (
+            '{"answer":"The policy expires on 2026-08-25.",'
+            '"document_ids":["expired"]}'
+        )
+
+
+class UnavailableGenerator:
+    def generate(self, *, system_prompt: str, user_prompt: str) -> str:
+        raise OllamaConnectionError("The local Ollama service is unavailable.")
 
 
 class WebApplicationTests(TestCase):
@@ -174,6 +206,15 @@ class WebApplicationTests(TestCase):
         ]
         self.repository = FakeRepository(self.records)
         self.vector_index = FakeVectorIndex()
+        self.vector_index.query_results = [
+            RetrievedDocumentChunk(
+                document_id="expired",
+                content="The policy expires on 2026-08-25.",
+                source="structured_document",
+                distance=0.1,
+            )
+        ]
+        self.generator = FakeGenerator()
         self.temporary_directory = TemporaryDirectory()
         self.processed_paths: list[Path] = []
 
@@ -196,6 +237,7 @@ class WebApplicationTests(TestCase):
                 upload_processor=process,
                 today_provider=lambda: date(2026, 8, 26),
                 vector_index=self.vector_index,
+                rag_generator=self.generator,
                 processed_path=Path(self.temporary_directory.name) / "processed",
             )
         )
@@ -222,6 +264,93 @@ class WebApplicationTests(TestCase):
             [item["expiration_status"] for item in response.json()],
             ["expired", "soon", "valid", "none"],
         )
+
+    def test_answers_chat_questions_with_clickable_document_references(self) -> None:
+        with self.assertLogs("smart_doc_tracker.pipeline", level="INFO") as captured:
+            response = self.client.post(
+                "/api/chat",
+                json={"question": "When does my insurance policy expire?"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "answer": "The policy expires on 2026-08-25.",
+                "documents": [
+                    {
+                        "id": "expired",
+                        "document_type": "insurance_policy",
+                        "summary": "A local insurance policy",
+                    }
+                ],
+            },
+        )
+        self.assertIn("Retrieved context", self.generator.questions[0])
+        log_output = "\n".join(captured.output)
+        self.assertIn("retrieval completed (1 fragments)", log_output)
+        self.assertIn("local generation started", log_output)
+        self.assertNotIn("insurance policy expire", log_output)
+
+    def test_reports_chat_failure_cause_without_logging_the_question(self) -> None:
+        unavailable_app = create_app(
+            WebDependencies(
+                repository_factory=lambda: self.repository,
+                upload_processor=lambda *_args: DocumentProcessingResult(raw_text=""),
+                today_provider=lambda: date(2026, 8, 26),
+                vector_index=self.vector_index,
+                rag_generator=UnavailableGenerator(),
+                processed_path=(
+                    Path(self.temporary_directory.name)
+                    / "unavailable-chat"
+                    / "processed"
+                ),
+            )
+        )
+        with TestClient(
+            unavailable_app,
+            base_url="http://127.0.0.1:8080",
+            headers={"X-Smart-Doc-CSRF": unavailable_app.state.csrf_token},
+        ) as client:
+            with self.assertLogs(
+                "smart_doc_tracker.web.app",
+                level="INFO",
+            ) as captured:
+                response = client.post(
+                    "/api/chat",
+                    json={"question": "private diagnostic question"},
+                )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(
+            response.json()["detail"],
+            "The local Ollama service or language model is unavailable.",
+        )
+        log_output = "\n".join(captured.output)
+        self.assertIn("Chat request failed with OllamaConnectionError", log_output)
+        self.assertNotIn("private diagnostic question", log_output)
+
+    def test_answers_expiry_year_chat_without_using_the_generator(self) -> None:
+        response = self.client.post(
+            "/api/chat",
+            json={"question": "Quali documenti scadono nel 2027?"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["documents"][0]["id"], "valid")
+        self.assertEqual(self.generator.questions, [])
+
+    def test_dashboard_keeps_chat_and_document_preview_in_the_same_page(self) -> None:
+        dashboard = self.client.get("/")
+        script = self.client.get("/static/js/dashboard.js")
+
+        self.assertIn('id="chat-panel"', dashboard.text)
+        self.assertIn('id="document-dialog"', dashboard.text)
+        self.assertIn("openChatDocument", script.text)
+        self.assertIn("showDetail(await response.json(), true)", script.text)
+        self.assertIn("documents.forEach((sourceDocument)", script.text)
+        self.assertIn("window.document.createElement", script.text)
+        self.assertNotIn("documents.forEach((document)", script.text)
 
     def test_rejects_external_hosts_cross_origin_writes_and_missing_csrf(self) -> None:
         valid_payload = self.records[0].document.model_dump(mode="json")

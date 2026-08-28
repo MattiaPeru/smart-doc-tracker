@@ -35,6 +35,7 @@
         <button id="pending-tab" class="tab" type="button">
           Awaiting confirmation <span id="pending-count" class="badge">0</span>
         </button>
+        <button id="chat-tab" class="tab" type="button">Chat with documents</button>
       </nav>
 
       <section class="workspace">
@@ -107,6 +108,28 @@
           </div>
           <p class="panel-intro">Review extracted values, add attributes, and confirm only when the data is correct.</p>
           <div id="pending-grid" class="document-grid" aria-live="polite"></div>
+        </section>
+
+        <section id="chat-panel" class="documents chat-panel panel" hidden>
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Private local assistant</p>
+              <h2>Chat with your documents</h2>
+            </div>
+          </div>
+          <div id="chat-messages" class="chat-messages" aria-live="polite">
+            <article class="chat-message bot-message">
+              <span class="chat-speaker">Assistant</span>
+              <p>Ask a question about your indexed documents. Answers remain on this host and include the supporting documents.</p>
+            </article>
+          </div>
+          <form id="chat-form" class="chat-form">
+            <label for="chat-question">Your question</label>
+            <div class="chat-composer">
+              <textarea id="chat-question" name="question" maxlength="4000" placeholder="For example: When does my insurance policy expire?" required></textarea>
+              <button type="submit">Send</button>
+            </div>
+          </form>
         </section>
       </section>
     </main>

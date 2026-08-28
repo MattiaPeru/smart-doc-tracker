@@ -34,7 +34,7 @@ from starlette.types import Scope
 
 from ..core.file_hash import FileHashingError, calculate_file_sha256
 from ..core.ocr import SUPPORTED_IMAGE_EXTENSIONS, TesseractOCR
-from ..core.parser import DocumentParser, LongDocumentParser
+from ..core.parser import DocumentParser, DocumentParsingError, LongDocumentParser
 from ..core.pdf import LocalPDFTextExtractor
 from ..db.database import (
     DatabaseConfigurationError,
@@ -46,16 +46,33 @@ from ..db.vector_database import (
     VectorDatabaseError,
     collection_name_for_embedding_model,
 )
-from ..infrastructure.ollama import OllamaClient, OllamaEmbeddingClient
+from ..infrastructure.ollama import (
+    OllamaClient,
+    OllamaConfigurationError,
+    OllamaConnectionError,
+    OllamaEmbeddingClient,
+    OllamaResponseError,
+)
 from ..interfaces.document_repository import DocumentRepository
 from ..interfaces.document_vector_index import DocumentVectorIndex
+from ..interfaces.text_generator import TextGenerator
 from ..models.document import DocumentData
 from ..mutation_pipeline import CoordinatedMutationError, DocumentMutationPipeline
-from ..pipeline import DocumentProcessingPipeline, DocumentProcessingResult
+from ..pipeline import (
+    DocumentProcessingPipeline,
+    DocumentProcessingResult,
+    DocumentQuestionPipeline,
+    ExpirationYearQuestionPipeline,
+    requested_expiry_year,
+)
 from .index_jobs import DocumentIndexJobService
 from .jobs import ProgressReporter, UploadJobService, UploadProcessor
+from .local_services import LocalServiceStartupError, LocalWebServiceManager
 from .pending import PendingDocumentService
 from .schemas import (
+    ChatDocumentReference,
+    ChatRequest,
+    ChatResponse,
     DocumentIndexedContentResponse,
     DocumentResponse,
     DocumentUpdateResponse,
@@ -108,6 +125,7 @@ class WebDependencies:
     upload_processor: UploadProcessor
     today_provider: Callable[[], date] = date.today
     vector_index: DocumentVectorIndex | None = None
+    rag_generator: TextGenerator | None = None
     processed_path: Path = Path("data/processed")
     repository_closer: Callable[[], None] | None = None
 
@@ -144,6 +162,7 @@ def default_web_dependencies() -> WebDependencies:
         repository_factory,
         process_upload,
         vector_index=vector_index,
+        rag_generator=OllamaClient(),
         repository_closer=repository.close,
     )
 
@@ -316,6 +335,66 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
             )
             for record in records
         ]
+
+    @app.post("/api/chat", response_model=ChatResponse)
+    def ask_documents(
+        request: ChatRequest,
+        repository: Repository,
+    ) -> ChatResponse:
+        """Answer from local document data and return validated citations."""
+        question = request.question.strip()
+        if not question:
+            raise HTTPException(status_code=422, detail="The question cannot be empty.")
+        _LOGGER.info("Chat request accepted; document contents are not logged.")
+        expiry_year = requested_expiry_year(
+            question,
+            today=resolved.today_provider(),
+        )
+        try:
+            if expiry_year is not None:
+                _LOGGER.info("Chat request is using the normalized expiry-date query.")
+                answer = ExpirationYearQuestionPipeline(
+                    repository,
+                    today_provider=resolved.today_provider,
+                ).ask(expiry_year)
+            else:
+                _LOGGER.info("Chat request is using semantic retrieval and Ollama.")
+                if resolved.vector_index is None or resolved.rag_generator is None:
+                    raise HTTPException(
+                        status_code=503,
+                        detail="The local document assistant is unavailable.",
+                    )
+                answer = DocumentQuestionPipeline(
+                    resolved.vector_index,
+                    resolved.rag_generator,
+                ).ask(question)
+        except (
+            DocumentParsingError,
+            OllamaConfigurationError,
+            OllamaConnectionError,
+            OllamaResponseError,
+            VectorDatabaseError,
+        ) as exc:
+            _LOGGER.error(
+                "Chat request failed with %s: %s",
+                type(exc).__name__,
+                str(exc),
+            )
+            raise HTTPException(
+                status_code=503,
+                detail=_chat_error_detail(exc),
+            ) from exc
+
+        documents: list[ChatDocumentReference] = []
+        for document_id in dict.fromkeys(answer.document_ids):
+            record = repository.get_document_by_id(document_id)
+            if record is not None:
+                documents.append(ChatDocumentReference.from_record(record))
+        _LOGGER.info(
+            "Chat request completed successfully (%s supporting documents).",
+            len(documents),
+        )
+        return ChatResponse(answer=answer.answer, documents=documents)
 
     @app.get("/api/documents/{document_id}", response_model=DocumentResponse)
     def get_document(
@@ -616,8 +695,21 @@ def _parse_query_value(value: str) -> Any:
         return value
 
 
+def _chat_error_detail(exc: Exception) -> str:
+    """Return a safe, actionable browser message for one local chat failure."""
+    if isinstance(exc, OllamaConnectionError):
+        return "The local Ollama service or language model is unavailable."
+    if isinstance(exc, OllamaResponseError):
+        return "The local Ollama service returned an invalid response."
+    if isinstance(exc, VectorDatabaseError):
+        return "The local document search could not be completed."
+    if isinstance(exc, DocumentParsingError):
+        return "The local model returned an invalid grounded answer."
+    return "The local document assistant is not configured correctly."
+
+
 def run(argv: Sequence[str] | None = None) -> None:
-    """Run one local Uvicorn worker bound to loopback by default."""
+    """Run the dashboard and own its required local service lifecycle."""
     parser = argparse.ArgumentParser(description="Run the local document dashboard.")
     parser.add_argument("--host", default="127.0.0.1", choices=("127.0.0.1", "::1"))
     parser.add_argument("--port", type=int, default=8080)
@@ -638,15 +730,22 @@ def run(argv: Sequence[str] | None = None) -> None:
     _configure_application_logging(arguments.log_level)
     import uvicorn
 
-    uvicorn.run(
-        "smart_doc_tracker.web.app:create_app",
-        factory=True,
-        host=arguments.host,
-        port=arguments.port,
-        workers=1,
-        log_level=arguments.log_level,
-        access_log=arguments.access_log,
-    )
+    services = LocalWebServiceManager()
+    try:
+        services.start()
+        uvicorn.run(
+            "smart_doc_tracker.web.app:create_app",
+            factory=True,
+            host=arguments.host,
+            port=arguments.port,
+            workers=1,
+            log_level=arguments.log_level,
+            access_log=arguments.access_log,
+        )
+    except LocalServiceStartupError as exc:
+        parser.exit(status=1, message=f"error: {exc}\n")
+    finally:
+        services.stop()
 
 
 def _configure_application_logging(level: str) -> None:

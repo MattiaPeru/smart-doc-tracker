@@ -109,7 +109,7 @@ function renderQueue(items) {
   if (!items.length) queueGrid.innerHTML = '<p class="empty">No documents are waiting to be processed.</p>';
 }
 
-function showDetail(item) {
+function showDetail(item, loadContent = false) {
   const detail = document.querySelector("#document-detail");
   detail.innerHTML = `<p class="eyebrow">${escapeHtml(expirationLabel(item))}</p>
     <h2>${escapeHtml(item.document_type.replaceAll("_", " "))}</h2>
@@ -140,6 +140,7 @@ function showDetail(item) {
   });
   detail.querySelector("#delete-document").addEventListener("click", () => deleteDocument(item.id));
   dialog.showModal();
+  if (loadContent) detail.querySelector("#load-indexed-content").click();
 }
 
 async function loadIndexedContent(documentId, button, container) {
@@ -333,7 +334,7 @@ async function loadProcessingQueue() {
 }
 
 function selectView(view) {
-  ["documents", "queue", "pending"].forEach((name) => {
+  ["documents", "queue", "pending", "chat"].forEach((name) => {
     document.querySelector(`#${name}-panel`).hidden = name !== view;
     document.querySelector(`#${name}-tab`).classList.toggle("active", name === view);
   });
@@ -356,9 +357,88 @@ document.querySelector("#clear-query").addEventListener("click", () => {
 document.querySelector("#documents-tab").addEventListener("click", () => selectView("documents"));
 document.querySelector("#queue-tab").addEventListener("click", () => selectView("queue"));
 document.querySelector("#pending-tab").addEventListener("click", () => selectView("pending"));
+document.querySelector("#chat-tab").addEventListener("click", () => selectView("chat"));
 document.querySelector("#refresh-button").addEventListener("click", () => Promise.all([loadDocuments(), loadProcessingQueue(), loadPendingDocuments()]));
 document.querySelector("#close-dialog").addEventListener("click", () => dialog.close());
 document.querySelector("#close-review-dialog").addEventListener("click", () => reviewDialog.close());
+
+function appendChatMessage(role, message, documents = []) {
+  const messages = document.querySelector("#chat-messages");
+  const article = document.createElement("article");
+  article.className = `chat-message ${role === "user" ? "user-message" : "bot-message"}`;
+  const speaker = document.createElement("span");
+  speaker.className = "chat-speaker";
+  speaker.textContent = role === "user" ? "You" : "Assistant";
+  const content = document.createElement("p");
+  content.textContent = message;
+  article.append(speaker, content);
+  if (documents.length) {
+    const sources = document.createElement("div");
+    sources.className = "chat-sources";
+    const label = document.createElement("strong");
+    label.textContent = "Supporting documents";
+    sources.append(label);
+    documents.forEach((sourceDocument) => {
+      const button = window.document.createElement("button");
+      button.type = "button";
+      button.className = "chat-source";
+      button.textContent = sourceDocument.document_type.replaceAll("_", " ");
+      button.title = sourceDocument.summary;
+      button.addEventListener("click", () => openChatDocument(sourceDocument.id));
+      sources.append(button);
+    });
+    article.append(sources);
+  }
+  messages.append(article);
+  article.scrollIntoView({ behavior: "smooth", block: "end" });
+  return article;
+}
+
+async function openChatDocument(documentId) {
+  try {
+    const response = await apiFetch(`/api/documents/${documentId}`);
+    if (!response.ok) throw requestError(response, "We couldn't open this document.");
+    showDetail(await response.json(), true);
+  } catch (error) {
+    showMessage(userMessage(error, "We couldn't open this document."), true);
+  }
+}
+
+document.querySelector("#chat-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const questionInput = form.querySelector("#chat-question");
+  const submitButton = form.querySelector('button[type="submit"]');
+  const question = questionInput.value.trim();
+  if (!question) return;
+  appendChatMessage("user", question);
+  questionInput.value = "";
+  submitButton.disabled = true;
+  submitButton.classList.add("is-saving");
+  submitButton.textContent = "Thinking...";
+  const pending = appendChatMessage("assistant", "Searching your local documents...");
+  try {
+    const response = await apiFetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    });
+    if (!response.ok) {
+      throw requestError(response, "The local document assistant couldn't answer right now.");
+    }
+    const payload = await response.json();
+    pending.remove();
+    appendChatMessage("assistant", payload.answer, payload.documents);
+  } catch (error) {
+    pending.remove();
+    appendChatMessage("assistant", userMessage(error, "The local document assistant couldn't answer right now."));
+  } finally {
+    submitButton.disabled = false;
+    submitButton.classList.remove("is-saving");
+    submitButton.textContent = "Send";
+    questionInput.focus();
+  }
+});
 
 document.querySelector("#upload-form").addEventListener("submit", async (event) => {
   event.preventDefault();

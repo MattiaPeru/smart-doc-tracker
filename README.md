@@ -62,11 +62,16 @@ python -m venv .venv
 python -m pip install -e .
 ```
 
-Start local persistence services:
+For CLI workflows, start local persistence services:
 
 ```powershell
 docker compose up -d mongodb chromadb
 ```
+
+The `smart-doc-tracker-web` command manages its own local service lifecycle. It starts
+missing MongoDB and ChromaDB containers plus Ollama, waits until they are ready, and
+stops only the services it started when the web server exits. Docker Desktop must be
+running; existing services are left running.
 
 Install the Ollama models before going offline:
 

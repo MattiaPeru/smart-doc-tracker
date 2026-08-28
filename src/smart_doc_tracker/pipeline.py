@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -44,6 +45,7 @@ from .models.rag import DocumentAnswer
 from .notifier.desktop import ExpirationNotification
 
 FileHasher = Callable[[str | Path], str]
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -376,8 +378,14 @@ class DocumentQuestionPipeline:
         candidate = question.strip()
         if not candidate:
             raise ValueError("question cannot be empty")
+        _LOGGER.info("Document assistant retrieval started (limit=%s).", limit)
         chunks = self.vector_index.query(candidate, limit=limit)
+        _LOGGER.info(
+            "Document assistant retrieval completed (%s fragments).",
+            len(chunks),
+        )
         if not chunks:
+            _LOGGER.info("Document assistant found no relevant local context.")
             return DocumentAnswer(
                 answer="No indexed document contains enough information to answer.",
                 document_ids=[],
@@ -387,6 +395,7 @@ class DocumentQuestionPipeline:
             f"source={json.dumps(chunk.source)}>\n{chunk.content}\n</document>"
             for chunk in chunks
         )
+        _LOGGER.info("Document assistant local generation started.")
         generated = self.generator.generate(
             system_prompt=_RAG_SYSTEM_PROMPT,
             user_prompt=(f"Question: {candidate}\n\nRetrieved context:\n{context}"),
@@ -394,14 +403,22 @@ class DocumentQuestionPipeline:
         try:
             answer = DocumentAnswer.model_validate_json(generated)
         except ValueError as exc:
+            _LOGGER.error("Document assistant returned an invalid answer schema.")
             raise DocumentParsingError(
                 "The local model returned an invalid document answer."
             ) from exc
         allowed_ids = {chunk.document_id for chunk in chunks}
         if any(document_id not in allowed_ids for document_id in answer.document_ids):
+            _LOGGER.error(
+                "Document assistant returned a citation outside retrieved context."
+            )
             raise DocumentParsingError(
                 "The local model referenced a document outside the retrieved context."
             )
+        _LOGGER.info(
+            "Document assistant answer validated (%s citations).",
+            len(answer.document_ids),
+        )
         return answer
 
 

@@ -11,14 +11,17 @@ Install Python 3.11 or newer, Tesseract with the required language packs, Ollama
 Docker. Create the virtual environment and install the package as shown in the
 [README](../README.md).
 
-Start MongoDB and ChromaDB:
+For CLI commands, start MongoDB and ChromaDB:
 
 ```powershell
 docker compose up -d mongodb chromadb
 ```
 
-Confirm Ollama is running and the chosen structured and embedding models are already
-installed locally.
+The `smart-doc-tracker-web` command starts missing MongoDB, ChromaDB, and Ollama
+services automatically and stops only the services it started when the server exits.
+Docker Desktop must be running before starting the web command. Confirm the chosen
+structured and embedding models are already installed locally; startup never
+downloads models.
 
 ## Process one document
 

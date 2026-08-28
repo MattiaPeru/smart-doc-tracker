@@ -12,7 +12,12 @@ not coordinated across multiple processes.
 
 ## Start and stop
 
-Start storage services without changing their data volumes:
+The `smart-doc-tracker-web` command starts missing MongoDB and ChromaDB containers and
+a missing Ollama process automatically. On shutdown it stops only the services
+started for that server run. Docker Desktop remains a host prerequisite and is not
+stopped by the application.
+
+For CLI workflows, start storage services without changing their data volumes:
 
 ```powershell
 docker compose up -d mongodb chromadb
@@ -34,10 +39,10 @@ docker compose down
 Do not use `docker compose down --volumes` unless permanent deletion of both
 databases has been explicitly approved and a verified backup exists when required.
 
-Start Ollama using the host's normal service mechanism. Health and model checks must
-not trigger automatic downloads in offline operation.
+For CLI workflows, start Ollama using the host's normal service mechanism. Health and
+model checks must not trigger automatic downloads in offline operation.
 
-Start the dashboard after the local services are healthy:
+Start the dashboard (its managed services are checked before FastAPI is created):
 
 ```powershell
 smart-doc-tracker-web

@@ -133,6 +133,22 @@ button.compact { padding: 6px 10px; }
 #filter-label { color: var(--muted); font-size: .78rem; }
 .document-grid { display: grid; gap: 12px; padding-top: 16px; }
 
+.chat-panel { display: flex; flex-direction: column; height: min(680px, calc(100vh - 250px)); min-height: 560px; }
+.chat-panel[hidden] { display: none; }
+.chat-messages { display: flex; flex: 1; flex-direction: column; gap: 14px; overflow-y: auto; padding: 20px 4px; }
+.chat-message { max-width: min(78%, 680px); border-radius: 14px; padding: 13px 15px; }
+.chat-message p { margin: 4px 0 0; color: inherit; line-height: 1.55; white-space: pre-wrap; }
+.bot-message { align-self: flex-start; border: 1px solid var(--line); background: white; }
+.user-message { align-self: flex-end; color: white; background: var(--accent); }
+.chat-speaker { font-size: .72rem; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; opacity: .72; }
+.chat-sources { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 13px; padding-top: 12px; border-top: 1px solid var(--line); }
+.chat-sources strong { flex-basis: 100%; color: var(--muted); font-size: .76rem; }
+.chat-source { padding: 6px 10px; color: var(--accent-dark); background: #e7f1ec; text-transform: capitalize; }
+.chat-source:hover { color: white; }
+.chat-form { border-top: 1px solid var(--line); padding-top: 16px; }
+.chat-composer { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; }
+.chat-composer textarea { min-height: 58px; max-height: 160px; }
+
 .document-card {
   position: relative;
   display: grid;
@@ -246,6 +262,11 @@ pre { overflow: auto; border-radius: 8px; padding: 14px; background: #f1f2ef; wh
   .topbar { align-items: center; }
   .date-fields { grid-template-columns: 1fr; }
   dialog { padding: 20px; }
+  .view-tabs { overflow-x: auto; }
+  .tab { flex: 0 0 auto; }
+  .chat-panel { height: 70vh; }
+  .chat-message { max-width: 92%; }
+  .chat-composer { grid-template-columns: 1fr; }
   .attribute-column-labels { grid-template-columns: minmax(76px, .7fr) minmax(0, 1.3fr) 38px; gap: 6px; }
   .attribute-row { grid-template-columns: minmax(76px, .7fr) minmax(0, 1.3fr) auto; gap: 6px; }
   .attribute-view-labels, .attribute-view-row, .attribute-view-summary-content { grid-template-columns: minmax(76px, .7fr) minmax(0, 1.3fr); }
