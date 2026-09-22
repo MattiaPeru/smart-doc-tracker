@@ -380,6 +380,17 @@ class WebApplicationTests(TestCase):
         self.assertIn("window.document.createElement", script.text)
         self.assertNotIn("documents.forEach((document)", script.text)
 
+    def test_dashboard_omits_json_attribute_query_controls(self) -> None:
+        dashboard = self.client.get("/")
+        script = self.client.get("/static/js/dashboard.js")
+
+        self.assertNotIn("Query JSON attributes", dashboard.text)
+        self.assertNotIn('id="query-form"', dashboard.text)
+        self.assertNotIn('id="field-key"', dashboard.text)
+        self.assertNotIn('id="field-value"', dashboard.text)
+        self.assertNotIn('querySelector("#query-form")', script.text)
+        self.assertNotIn('querySelector("#clear-query")', script.text)
+
     def test_rejects_external_hosts_cross_origin_writes_and_missing_csrf(self) -> None:
         valid_payload = self.records[0].document.model_dump(mode="json")
         external_host = self.client.get(

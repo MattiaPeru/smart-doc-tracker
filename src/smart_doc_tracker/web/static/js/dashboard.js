@@ -6,7 +6,6 @@ import { clearMessage, showMessage } from "./messages.js";
 const grid = document.querySelector("#document-grid");
 const queueGrid = document.querySelector("#queue-grid");
 const pendingGrid = document.querySelector("#pending-grid");
-const filterLabel = document.querySelector("#filter-label");
 const dialog = document.querySelector("#document-dialog");
 const reviewDialog = document.querySelector("#review-dialog");
 const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
@@ -320,18 +319,6 @@ function selectView(view) {
   if (view === "pending") loadPendingDocuments();
 }
 
-document.querySelector("#query-form").addEventListener("submit", (event) => {
-  event.preventDefault();
-  const data = new FormData(event.currentTarget);
-  const parameters = new URLSearchParams({ field_key: data.get("field_key"), field_value: data.get("field_value") });
-  filterLabel.textContent = `${data.get("field_key")} = ${data.get("field_value")}`;
-  loadDocuments(parameters);
-});
-document.querySelector("#clear-query").addEventListener("click", () => {
-  document.querySelector("#query-form").reset();
-  filterLabel.textContent = "All records";
-  loadDocuments();
-});
 document.querySelector("#documents-tab").addEventListener("click", () => selectView("documents"));
 document.querySelector("#queue-tab").addEventListener("click", () => selectView("queue"));
 document.querySelector("#pending-tab").addEventListener("click", () => selectView("pending"));
