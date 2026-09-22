@@ -9,6 +9,7 @@ const pendingGrid = document.querySelector("#pending-grid");
 const dialog = document.querySelector("#document-dialog");
 const reviewDialog = document.querySelector("#review-dialog");
 const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
+let conversationId = crypto.randomUUID();
 
 function apiFetch(resource, options = {}) {
   const method = (options.method || "GET").toUpperCase();
@@ -396,7 +397,7 @@ document.querySelector("#chat-form").addEventListener("submit", async (event) =>
     const response = await apiFetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({ question, conversation_id: conversationId }),
     });
     if (!response.ok) {
       throw requestError(response, "The local document assistant couldn't answer right now.");
@@ -412,6 +413,22 @@ document.querySelector("#chat-form").addEventListener("submit", async (event) =>
     submitButton.classList.remove("is-saving");
     submitButton.textContent = "Send";
     questionInput.focus();
+  }
+});
+
+document.querySelector("#new-chat-button").addEventListener("click", async () => {
+  const previousConversationId = conversationId;
+  conversationId = crypto.randomUUID();
+  const messages = document.querySelector("#chat-messages");
+  const welcome = messages.querySelector("[data-chat-welcome]").cloneNode(true);
+  messages.replaceChildren(welcome);
+  document.querySelector("#chat-question").focus();
+  try {
+    await apiFetch(`/api/chat/conversations/${previousConversationId}`, {
+      method: "DELETE",
+    });
+  } catch (_error) {
+    // The abandoned conversation remains unreachable and expires automatically.
   }
 });
 

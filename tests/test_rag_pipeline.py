@@ -9,7 +9,11 @@ from smart_doc_tracker.core.parser import DocumentParsingError
 from smart_doc_tracker.db.database import StoredDocument
 from smart_doc_tracker.main import run
 from smart_doc_tracker.models.document import DocumentData
-from smart_doc_tracker.models.rag import RetrievedDocumentChunk
+from smart_doc_tracker.models.rag import (
+    ConversationTurn,
+    IndexedDocumentFragment,
+    RetrievedDocumentChunk,
+)
 from smart_doc_tracker.pipeline import (
     DocumentQuestionPipeline,
     ExpirationYearQuestionPipeline,
@@ -25,6 +29,17 @@ class FakeVectorIndex:
     def query(self, question: str, *, limit: int = 5) -> list[RetrievedDocumentChunk]:
         self.calls.append((question, limit))
         return self.chunks
+
+    def get_document_fragments(
+        self, document_id: str
+    ) -> list[IndexedDocumentFragment]:
+        return [
+            IndexedDocumentFragment(
+                f"{document_id}:structured",
+                "Remembered issue date: 2025-01-01",
+                "structured_data",
+            )
+        ]
 
 
 class FakeGenerator:
@@ -126,6 +141,38 @@ class DocumentQuestionPipelineTests(TestCase):
         self.assertEqual(answer.document_ids, ["doc-1"])
         self.assertEqual(index.calls, [("When does it expire?", 3)])
         self.assertIn("Expiry: 2030-01-01", generator.calls[0][1])
+
+    def test_uses_recent_conversation_to_resolve_a_follow_up_question(self) -> None:
+        index = FakeVectorIndex(
+            [
+                RetrievedDocumentChunk(
+                    "doc-1", "Issue date: 2025-01-01", "structured_data", 0.1
+                )
+            ]
+        )
+        generator = FakeGenerator(
+            '{"answer":"It was issued on 2025-01-01.","document_ids":["doc-1"]}'
+        )
+        history = (
+            ConversationTurn(
+                "When does my insurance policy expire?",
+                "It expires in 2030.",
+                ("doc-1",),
+            ),
+        )
+
+        DocumentQuestionPipeline(index, generator).ask(
+            "And when was it issued?",
+            history=history,
+        )
+
+        retrieval_question = index.calls[0][0]
+        self.assertIn("When does my insurance policy expire?", retrieval_question)
+        self.assertIn("And when was it issued?", retrieval_question)
+        prompt = generator.calls[0][1]
+        self.assertIn('"document_ids": ["doc-1"]', prompt)
+        self.assertIn("Current question: And when was it issued?", prompt)
+        self.assertIn("Remembered issue date: 2025-01-01", prompt)
 
     def test_rejects_document_ids_not_present_in_retrieved_context(self) -> None:
         index = FakeVectorIndex(

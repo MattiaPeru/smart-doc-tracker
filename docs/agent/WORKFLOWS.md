@@ -36,18 +36,23 @@ pipeline.
 ## Document questions
 
 ```text
-question
+question + optional process-local conversation ID
+  -> bounded temporary history lookup
   -> explicit expiry-year detection
      -> DocumentRepository date query
   OR
   -> DocumentQuestionPipeline
-     -> DocumentVectorIndex query
+     -> contextual DocumentVectorIndex query
+     -> previously cited local document fragments (follow-up questions only)
      -> local TextGenerator
      -> validated DocumentAnswer
+  -> completed exchange retained in memory until cleared, expired, or shutdown
 ```
 
 Calendar-year expiry questions bypass vector retrieval. General answers may cite
-only document identifiers present in the locally retrieved context.
+only document identifiers present in the locally retrieved context. Temporary chat
+history is bounded, isolated by conversation ID, never persisted, and used only to
+resolve follow-up references; document context remains the sole factual evidence.
 
 ## Expiration notifications
 

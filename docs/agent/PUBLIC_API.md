@@ -800,6 +800,16 @@ Fields:
 - `content: str`
 - `source: str`
 
+### `ConversationTurn`
+
+One bounded in-memory exchange used to resolve follow-up questions.
+
+Fields:
+
+- `question: str`
+- `answer: str`
+- `document_ids: tuple[str, ...]`
+
 ### `DocumentAnswer(BaseModel)`
 
 Grounded answer produced from retrieved local document fragments.
@@ -984,7 +994,7 @@ Fields:
 
 Methods:
 
-- `ask(self, question: str, *, limit: int = 5) -> DocumentAnswer` — Answer a natural-language question using only retrieved local context.
+- `ask(self, question: str, *, limit: int = 5, history: Sequence[ConversationTurn] = ()) -> DocumentAnswer` — Answer a natural-language question using only retrieved local context.
 
 - `requested_expiry_year(question: str, *, today: date | None = None) -> int | None` — Return one unambiguous year from an expiry-related question.
 
@@ -1076,12 +1086,37 @@ Fields:
 - `rag_generator: TextGenerator | None = None`
 - `processed_path: Path = Path('data/processed')`
 - `repository_closer: Callable[[], None] | None = None`
+- `chat_memory: TemporaryChatMemory | None = None`
 
 - `default_web_dependencies() -> WebDependencies` — Compose the production dashboard from loopback-only adapters.
 
 - `create_app(dependencies: WebDependencies | None = None) -> FastAPI` — Create a testable local dashboard with injected application services.
 
 - `run(argv: Sequence[str] | None = None) -> None` — Run the dashboard and own its required local service lifecycle.
+
+## `smart_doc_tracker.web.chat_memory`
+
+Source: [`src/smart_doc_tracker/web/chat_memory.py`](../../src/smart_doc_tracker/web/chat_memory.py)
+
+Bounded, process-local memory for document chat conversations.
+
+### `TemporaryChatMemory`
+
+Keep a small number of recent chat turns in memory and never on disk.
+
+Fields:
+
+- `max_turns: int = 6`
+- `max_conversations: int = 100`
+- `ttl_seconds: float = 30 * 60`
+- `clock: Callable[[], float] = time.monotonic`
+
+Methods:
+
+- `history(self, conversation_id: str) -> tuple[ConversationTurn, ...]` — Return a stable snapshot of one active conversation.
+- `remember(self, conversation_id: str, turn: ConversationTurn) -> None` — Append one completed exchange and enforce all memory bounds.
+- `clear(self, conversation_id: str) -> None` — Forget one conversation immediately.
+- `clear_all(self) -> None` — Forget every conversation, including during application shutdown.
 
 ## `smart_doc_tracker.web.index_jobs`
 
@@ -1237,6 +1272,7 @@ One bounded natural-language question for the local document assistant.
 Fields:
 
 - `question: str = Field(min_length=1, max_length=4000)`
+- `conversation_id: str | None = Field(default=None, min_length=1, max_length=64, pattern='^[A-Za-z0-9_-]+$')`
 
 ### `ChatDocumentReference(BaseModel)`
 

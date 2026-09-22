@@ -26,6 +26,15 @@ class IndexedDocumentFragment:
     source: str
 
 
+@dataclass(frozen=True, slots=True)
+class ConversationTurn:
+    """One bounded in-memory exchange used to resolve follow-up questions."""
+
+    question: str
+    answer: str
+    document_ids: tuple[str, ...]
+
+
 class DocumentAnswer(BaseModel):
     """Grounded answer produced from retrieved local document fragments."""
 

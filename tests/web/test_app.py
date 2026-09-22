@@ -142,6 +142,7 @@ class FakeVectorIndex:
         self.updates: list[tuple[str, DocumentData]] = []
         self.deletes: list[str] = []
         self.query_results: list[RetrievedDocumentChunk] = []
+        self.queries: list[str] = []
 
     def upsert_document(
         self,
@@ -174,6 +175,7 @@ class FakeVectorIndex:
         *,
         limit: int = 5,
     ) -> list[RetrievedDocumentChunk]:
+        self.queries.append(question)
         return self.query_results[:limit]
 
     def get_document_fragments(self, document_id: str) -> list[IndexedDocumentFragment]:
@@ -320,6 +322,65 @@ class WebApplicationTests(TestCase):
         self.assertIn("local generation started", log_output)
         self.assertNotIn("insurance policy expire", log_output)
 
+    def test_chat_remembers_only_questions_from_the_same_temporary_conversation(
+        self,
+    ) -> None:
+        first = self.client.post(
+            "/api/chat",
+            json={
+                "question": "When does my insurance policy expire?",
+                "conversation_id": "conversation-a",
+            },
+        )
+        second = self.client.post(
+            "/api/chat",
+            json={
+                "question": "And when was it issued?",
+                "conversation_id": "conversation-a",
+            },
+        )
+        separate = self.client.post(
+            "/api/chat",
+            json={
+                "question": "And who owns it?",
+                "conversation_id": "conversation-b",
+            },
+        )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(separate.status_code, 200)
+        previous_question = "When does my insurance policy expire?"
+        self.assertIn(previous_question, self.vector_index.queries[1])
+        self.assertNotIn(previous_question, self.vector_index.queries[2])
+        self.assertIn(
+            '"question": "When does my insurance policy expire?"',
+            self.generator.questions[1],
+        )
+        self.assertIn("Conversation history:\n[]", self.generator.questions[2])
+
+    def test_new_conversation_endpoint_forgets_temporary_history(self) -> None:
+        payload = {
+            "question": "When does my insurance policy expire?",
+            "conversation_id": "conversation-to-clear",
+        }
+        self.assertEqual(self.client.post("/api/chat", json=payload).status_code, 200)
+
+        cleared = self.client.delete(
+            "/api/chat/conversations/conversation-to-clear"
+        )
+        follow_up = self.client.post(
+            "/api/chat",
+            json={
+                "question": "And when was it issued?",
+                "conversation_id": "conversation-to-clear",
+            },
+        )
+
+        self.assertEqual(cleared.status_code, 204)
+        self.assertEqual(follow_up.status_code, 200)
+        self.assertIn("Conversation history:\n[]", self.generator.questions[-1])
+
     def test_reports_chat_failure_cause_without_logging_the_question(self) -> None:
         unavailable_app = create_app(
             WebDependencies(
@@ -379,6 +440,9 @@ class WebApplicationTests(TestCase):
         self.assertIn("documents.forEach((sourceDocument)", script.text)
         self.assertIn("window.document.createElement", script.text)
         self.assertNotIn("documents.forEach((document)", script.text)
+        self.assertIn('id="new-chat-button"', dashboard.text)
+        self.assertIn("conversation_id: conversationId", script.text)
+        self.assertIn("crypto.randomUUID()", script.text)
 
     def test_dashboard_omits_json_attribute_query_controls(self) -> None:
         dashboard = self.client.get("/")

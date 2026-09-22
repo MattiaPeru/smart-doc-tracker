@@ -57,6 +57,7 @@ from ..interfaces.document_repository import DocumentRepository
 from ..interfaces.document_vector_index import DocumentVectorIndex
 from ..interfaces.text_generator import TextGenerator
 from ..models.document import DocumentData
+from ..models.rag import ConversationTurn
 from ..mutation_pipeline import CoordinatedMutationError, DocumentMutationPipeline
 from ..pipeline import (
     DocumentProcessingPipeline,
@@ -65,6 +66,7 @@ from ..pipeline import (
     ExpirationYearQuestionPipeline,
     requested_expiry_year,
 )
+from .chat_memory import TemporaryChatMemory
 from .index_jobs import DocumentIndexJobService
 from .jobs import ProgressReporter, UploadJobService, UploadProcessor
 from .local_services import LocalServiceStartupError, LocalWebServiceManager
@@ -128,6 +130,7 @@ class WebDependencies:
     rag_generator: TextGenerator | None = None
     processed_path: Path = Path("data/processed")
     repository_closer: Callable[[], None] | None = None
+    chat_memory: TemporaryChatMemory | None = None
 
 
 def default_web_dependencies() -> WebDependencies:
@@ -170,6 +173,7 @@ def default_web_dependencies() -> WebDependencies:
 def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
     """Create a testable local dashboard with injected application services."""
     resolved = dependencies or default_web_dependencies()
+    chat_memory = resolved.chat_memory or TemporaryChatMemory()
     data_path = resolved.processed_path.parent
     pending_documents = PendingDocumentService(
         resolved.processed_path,
@@ -217,6 +221,7 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
         if index_jobs is not None:
             index_jobs.close()
         pending_documents.close()
+        chat_memory.clear_all()
         if resolved.repository_closer is not None:
             resolved.repository_closer()
 
@@ -346,6 +351,11 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
         if not question:
             raise HTTPException(status_code=422, detail="The question cannot be empty.")
         _LOGGER.info("Chat request accepted; document contents are not logged.")
+        history = (
+            chat_memory.history(request.conversation_id)
+            if request.conversation_id is not None
+            else ()
+        )
         expiry_year = requested_expiry_year(
             question,
             today=resolved.today_provider(),
@@ -367,7 +377,7 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
                 answer = DocumentQuestionPipeline(
                     resolved.vector_index,
                     resolved.rag_generator,
-                ).ask(question)
+                ).ask(question, history=history)
         except (
             DocumentParsingError,
             OllamaConfigurationError,
@@ -394,7 +404,27 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
             "Chat request completed successfully (%s supporting documents).",
             len(documents),
         )
+        if request.conversation_id is not None:
+            chat_memory.remember(
+                request.conversation_id,
+                ConversationTurn(
+                    question=question,
+                    answer=answer.answer,
+                    document_ids=tuple(answer.document_ids),
+                ),
+            )
         return ChatResponse(answer=answer.answer, documents=documents)
+
+    @app.delete("/api/chat/conversations/{conversation_id}", status_code=204)
+    def clear_chat_conversation(conversation_id: str) -> Response:
+        """Forget one process-local chat conversation."""
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", conversation_id):
+            raise HTTPException(
+                status_code=422,
+                detail="Invalid conversation identifier.",
+            )
+        chat_memory.clear(conversation_id)
+        return Response(status_code=204)
 
     @app.get("/api/documents/{document_id}", response_model=DocumentResponse)
     def get_document(
