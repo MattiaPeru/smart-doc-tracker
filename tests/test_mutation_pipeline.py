@@ -31,6 +31,7 @@ class FakeRepository:
             created_at=datetime(2026, 8, 26, tzinfo=UTC),
         )
         self.fail_delete = False
+        self.inserted_hashes: list[str] = []
 
     def __enter__(self) -> FakeRepository:
         return self
@@ -47,6 +48,7 @@ class FakeRepository:
         *,
         file_hash: str,
     ) -> DocumentInsertResult:
+        self.inserted_hashes.append(file_hash)
         self.record = StoredDocument(
             id="doc-1",
             file_hash=file_hash,
@@ -87,6 +89,7 @@ class FakeVectorIndex:
         self.fail_update = False
         self.restored: list[dict[str, Any]] = []
         self.deleted: list[str] = []
+        self.upserts: list[tuple[str, str, DocumentData]] = []
 
     def snapshot_document(self, document_id: str) -> dict[str, Any]:
         return {"ids": [f"{document_id}:summary"]}
@@ -103,6 +106,7 @@ class FakeVectorIndex:
     ) -> None:
         if self.fail_upsert:
             raise RuntimeError("Local index failed")
+        self.upserts.append((document_id, raw_text, document))
 
     def update_document_data(
         self,
@@ -153,6 +157,16 @@ class DocumentMutationPipelineTests(TestCase):
         self.assertEqual(result.index_update_id, "update-job")
         self.assertEqual(self.scheduled, ["doc-1"])
         self.assertEqual(self.vector.restored, [])
+
+    def test_creates_manual_document_without_ocr_source_text(self) -> None:
+        document = _document("Entered by the user")
+
+        result = self.pipeline.create_manual(document)
+
+        self.assertTrue(result.inserted)
+        self.assertEqual(len(self.repository.inserted_hashes[0]), 64)
+        self.assertRegex(self.repository.inserted_hashes[0], r"^[0-9a-f]{64}$")
+        self.assertEqual(self.vector.upserts, [("doc-1", "", document)])
 
     def test_restores_vector_snapshot_when_mongo_delete_fails(self) -> None:
         self.repository.fail_delete = True

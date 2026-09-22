@@ -111,6 +111,8 @@ button.danger-button { border-color: var(--expired); background: var(--expired);
 button.danger-button:hover { background: #8e2929; }
 button.compact { padding: 6px 10px; }
 .actions { display: flex; gap: 8px; margin-top: 4px; }
+.manual-entry { display: grid; gap: 8px; margin-top: 14px; text-align: center; }
+.manual-entry span { color: var(--muted); font-size: .78rem; text-transform: uppercase; }
 
 .view-tabs { display: flex; gap: 8px; margin-bottom: 18px; }
 .tab { color: var(--accent-dark); background: transparent; }

@@ -67,7 +67,7 @@ function renderPending(items) {
       <div><h3>${escapeHtml(item.document.document_type.replaceAll("_", " "))}</h3>
       <p>${escapeHtml(item.file_name)} · ${escapeHtml(item.document.summary)}</p></div>
       <div class="expiry">Review fields</div>`;
-    const open = () => showEditor(item, true);
+    const open = () => showEditor(item, "pending");
     card.addEventListener("click", open);
     card.addEventListener("keydown", (event) => { if (event.key === "Enter") open(); });
     pendingGrid.append(card);
@@ -136,7 +136,7 @@ function showDetail(item, loadContent = false) {
   });
   detail.querySelector("#edit-document").addEventListener("click", () => {
     dialog.close();
-    showEditor({ id: item.id, document: item }, false);
+    showEditor({ id: item.id, document: item }, "stored");
   });
   detail.querySelector("#delete-document").addEventListener("click", () => deleteDocument(item.id));
   dialog.showModal();
@@ -174,37 +174,41 @@ async function loadIndexedContent(documentId, button, container) {
   }
 }
 
-function showEditor(item, isPending) {
+function showEditor(item, mode) {
+  const isPending = mode === "pending";
+  const isManual = mode === "manual";
   const documentData = item.document;
   const detail = document.querySelector("#review-detail");
-  detail.innerHTML = `<p class="eyebrow">${isPending ? "Confirm extracted data" : "Edit stored document"}</p>
-    <h2>${isPending ? escapeHtml(item.file_name) : "Document fields"}</h2>
+  const eyebrow = isPending ? "Confirm extracted data" : isManual ? "Direct entry" : "Edit stored document";
+  const heading = isPending ? escapeHtml(item.file_name) : isManual ? "Add a document manually" : "Document fields";
+  detail.innerHTML = `<p class="eyebrow">${eyebrow}</p>
+    <h2>${heading}</h2>
     <form id="document-editor">
-      <label for="edit-document-type">Document type</label>
+      <label for="edit-document-type">Document title</label>
       <input id="edit-document-type" name="document_type" maxlength="100" required value="${escapeHtml(documentData.document_type)}">
-      <label for="edit-summary">Summary</label>
+      <label for="edit-summary">${isManual ? "Summary" : "Summary"}</label>
       <textarea id="edit-summary" name="summary" maxlength="1000" required>${escapeHtml(documentData.summary)}</textarea>
       <div class="date-fields">
         <div><label for="edit-issue-date">Issue date</label><input id="edit-issue-date" name="issue_date" type="date" value="${escapeHtml(documentData.issue_date || "")}"></div>
         <div><label for="edit-expiry-date">Expiry date</label><input id="edit-expiry-date" name="expiry_date" type="date" value="${escapeHtml(documentData.expiry_date || "")}"></div>
       </div>
-      <div class="attributes-heading"><h3>Extracted attributes</h3><button id="add-field" class="secondary compact" type="button">Add field</button></div>
+      <div class="attributes-heading"><h3>${isManual ? "Additional fields" : "Extracted attributes"}</h3><button id="add-field" class="secondary compact" type="button">Add field</button></div>
       <div class="attribute-column-labels" aria-hidden="true"><span>Field name</span><span>Value</span></div>
       <div id="attribute-fields"></div>
       <div id="editor-message" class="editor-message" role="alert" hidden></div>
-      <div class="actions dialog-actions"><button type="submit">${isPending ? "Confirm and save" : "Save changes"}</button>
+      <div class="actions dialog-actions"><button type="submit">${isPending ? "Confirm and save" : isManual ? "Add document" : "Save changes"}</button>
       ${isPending ? '<button id="reject-pending" class="danger-button" type="button">Reject</button>' : ""}</div>
     </form>`;
   const fields = detail.querySelector("#attribute-fields");
   Object.entries(documentData.extracted_data).forEach(([key, value]) => addFieldRow(fields, key, value));
   detail.querySelector("#add-field").addEventListener("click", () => addFieldRow(fields));
-  detail.querySelector("#document-editor").addEventListener("submit", (event) => saveEditor(event, item.id, isPending));
+  detail.querySelector("#document-editor").addEventListener("submit", (event) => saveEditor(event, item.id, mode));
   if (isPending) detail.querySelector("#reject-pending").addEventListener("click", () => rejectPending(item.id));
   reviewDialog.showModal();
 }
 
 
-async function saveEditor(event, identifier, isPending) {
+async function saveEditor(event, identifier, mode) {
   event.preventDefault();
   const form = event.currentTarget;
   const submitButton = form.querySelector('button[type="submit"]');
@@ -215,9 +219,13 @@ async function saveEditor(event, identifier, isPending) {
   form.setAttribute("aria-busy", "true");
   clearMessage();
   try {
-    const endpoint = isPending ? `/api/pending-documents/${identifier}/confirm` : `/api/documents/${identifier}`;
+    const isPending = mode === "pending";
+    const isManual = mode === "manual";
+    const endpoint = isPending
+      ? `/api/pending-documents/${identifier}/confirm`
+      : isManual ? "/api/documents/manual" : `/api/documents/${identifier}`;
     const response = await apiFetch(endpoint, {
-      method: isPending ? "POST" : "PUT", headers: { "Content-Type": "application/json" },
+      method: isPending || isManual ? "POST" : "PUT", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(editorPayload(form)),
     });
     if (!response.ok) {
@@ -225,7 +233,7 @@ async function saveEditor(event, identifier, isPending) {
     }
     const saved = await response.json();
     reviewDialog.close();
-    if (isPending) {
+    if (isPending || isManual) {
       showMessage("Document added successfully.");
     } else {
       showMessage("Changes saved. Search will be ready shortly.");
@@ -358,6 +366,16 @@ document.querySelector("#documents-tab").addEventListener("click", () => selectV
 document.querySelector("#queue-tab").addEventListener("click", () => selectView("queue"));
 document.querySelector("#pending-tab").addEventListener("click", () => selectView("pending"));
 document.querySelector("#chat-tab").addEventListener("click", () => selectView("chat"));
+document.querySelector("#add-manual-document").addEventListener("click", () => showEditor({
+  id: null,
+  document: {
+    document_type: "",
+    summary: "",
+    issue_date: null,
+    expiry_date: null,
+    extracted_data: {},
+  },
+}, "manual"));
 document.querySelector("#refresh-button").addEventListener("click", () => Promise.all([loadDocuments(), loadProcessingQueue(), loadPendingDocuments()]));
 document.querySelector("#close-dialog").addEventListener("click", () => dialog.close());
 document.querySelector("#close-review-dialog").addEventListener("click", () => reviewDialog.close());

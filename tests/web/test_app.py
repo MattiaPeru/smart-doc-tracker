@@ -657,6 +657,39 @@ class WebApplicationTests(TestCase):
         )
         self.assertEqual(self.vector_index.upserts[0][0], "confirmed")
 
+    def test_creates_manual_document_without_upload_processing(self) -> None:
+        payload = {
+            "document_type": "membership card",
+            "summary": "Local club membership",
+            "issue_date": "2026-09-01",
+            "expiry_date": "2027-08-31",
+            "extracted_data": {
+                "membership_number": "M-42",
+                "holder": {"name": "Test User"},
+            },
+        }
+
+        response = self.client.post("/api/documents/manual", json=payload)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["document_type"], "membership_card")
+        self.assertEqual(response.json()["summary"], "Local club membership")
+        self.assertEqual(self.processed_paths, [])
+        self.assertEqual(self.vector_index.upserts[-1][1], "")
+        self.assertEqual(
+            self.vector_index.upserts[-1][2].extracted_data, payload["extracted_data"]
+        )
+        self.assertRegex(self.records[-1].file_hash, r"^[0-9a-f]{64}$")
+
+    def test_dashboard_offers_manual_document_entry(self) -> None:
+        dashboard = self.client.get("/")
+        script = self.client.get("/static/js/dashboard.js")
+
+        self.assertIn('id="add-manual-document"', dashboard.text)
+        self.assertIn('"/api/documents/manual"', script.text)
+        self.assertIn('"Title"', script.text)
+        self.assertIn('"Additional fields"', script.text)
+
     def test_updates_and_deletes_a_document_in_both_stores(self) -> None:
         payload = self.records[1].document.model_dump(mode="json")
         payload["summary"] = "Updated summary"

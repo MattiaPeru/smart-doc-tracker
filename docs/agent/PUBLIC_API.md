@@ -838,6 +838,7 @@ Fields:
 
 Methods:
 
+- `create_manual(self, document: DocumentData) -> DocumentInsertResult` — Persist and index user-authored data without an OCR source file.
 - `confirm(self, document: DocumentData, *, file_hash: str, raw_text: str, sections: Sequence[StructuredDocumentSection] = (), finalize: Callable[[], object] | None = None) -> DocumentInsertResult` — Persist and index one confirmed document before finalizing its source.
 - `update(self, document_id: str, document: DocumentData) -> DocumentUpdateResult | None` — Store one update and durably schedule its local search refresh.
 - `delete(self, document_id: str) -> StoredDocument | None` — Delete from ChromaDB and MongoDB, restoring ChromaDB if MongoDB fails.

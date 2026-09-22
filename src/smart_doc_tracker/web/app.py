@@ -462,6 +462,22 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
             alert_days=30,
         )
 
+    @app.post("/api/documents/manual", response_model=DocumentResponse)
+    def create_manual_document(document: DocumentData) -> DocumentResponse:
+        """Validate, persist, and index a document entered entirely by the user."""
+        service = _require_mutation_service(mutations)
+        try:
+            result = service.create_manual(document)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except CoordinatedMutationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return DocumentResponse.from_record(
+            result.record,
+            today=resolved.today_provider(),
+            alert_days=30,
+        )
+
     @app.get(
         "/api/document-updates/{update_id}",
         response_model=IndexUpdateJobResponse,

@@ -5,6 +5,7 @@ from __future__ import annotations
 from _thread import LockType
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from secrets import token_hex
 from threading import Lock
 
 from .db.database import DocumentInsertResult, StoredDocument
@@ -37,6 +38,14 @@ class DocumentMutationPipeline:
     vector_index: DocumentVectorIndex
     index_update_submitter: IndexUpdateSubmitter
     operation_lock: LockType = field(default_factory=Lock)
+
+    def create_manual(self, document: DocumentData) -> DocumentInsertResult:
+        """Persist and index user-authored data without an OCR source file."""
+        return self.confirm(
+            document,
+            file_hash=token_hex(32),
+            raw_text="",
+        )
 
     def confirm(
         self,
