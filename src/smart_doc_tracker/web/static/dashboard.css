@@ -107,6 +107,19 @@ button.is-saving::before {
 }
 button.secondary { color: var(--accent-dark); background: transparent; }
 button.secondary:hover { background: rgb(23 107 82 / 8%); }
+.button-link {
+  display: inline-block;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: white;
+  background: var(--accent);
+  font-weight: 750;
+  text-decoration: none;
+}
+.button-link.secondary { color: var(--accent-dark); background: transparent; }
+.button-link.secondary:hover { background: rgb(23 107 82 / 8%); }
+.button-link.compact { padding: 6px 10px; }
 button.danger-button { border-color: var(--expired); background: var(--expired); }
 button.danger-button:hover { background: #8e2929; }
 button.compact { padding: 6px 10px; }
@@ -204,7 +217,10 @@ dialog::backdrop { background: rgb(18 28 24 / 55%); }
 .detail-grid dt { color: var(--muted); }
 .detail-grid dd { margin: 0; }
 pre { overflow: auto; border-radius: 8px; padding: 14px; background: #f1f2ef; white-space: pre-wrap; }
-.indexed-content-section { margin-top: 22px; border-top: 1px solid var(--line); padding-top: 18px; }
+.original-document-section { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 22px; border-top: 1px solid var(--line); padding-top: 18px; }
+.original-document-section h3, .original-document-section p { margin: 0; }
+.original-document-section p { margin-top: 5px; overflow-wrap: anywhere; }
+.original-document-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .sensitive-hint { color: var(--muted); font-size: .85rem; }
 .indexed-fragment { margin-top: 12px; }
 .indexed-fragment h4 { margin: 0 0 6px; color: var(--muted); font-size: .8rem; font-weight: 600; text-transform: capitalize; }

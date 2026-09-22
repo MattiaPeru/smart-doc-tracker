@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from unittest import TestCase
 
@@ -72,6 +73,22 @@ class FakeRepository:
             file_hash=self.record.file_hash,
             document=document,
             created_at=self.record.created_at,
+        )
+        return self.record
+
+    def set_source_file_name(
+        self,
+        document_id: str,
+        source_file_name: str,
+    ) -> StoredDocument | None:
+        if self.record is None or self.record.id != document_id:
+            return None
+        self.record = StoredDocument(
+            id=self.record.id,
+            file_hash=self.record.file_hash,
+            document=self.record.document,
+            created_at=self.record.created_at,
+            source_file_name=source_file_name,
         )
         return self.record
 
@@ -167,6 +184,16 @@ class DocumentMutationPipelineTests(TestCase):
         self.assertEqual(len(self.repository.inserted_hashes[0]), 64)
         self.assertRegex(self.repository.inserted_hashes[0], r"^[0-9a-f]{64}$")
         self.assertEqual(self.vector.upserts, [("doc-1", "", document)])
+
+    def test_links_the_archived_source_after_confirmation(self) -> None:
+        result = self.pipeline.confirm(
+            _document("Confirmed"),
+            file_hash="b" * 64,
+            raw_text="Local source text",
+            finalize=lambda: Path("data/processed/identity-card.pdf"),
+        )
+
+        self.assertEqual(result.record.source_file_name, "identity-card.pdf")
 
     def test_restores_vector_snapshot_when_mongo_delete_fails(self) -> None:
         self.repository.fail_delete = True

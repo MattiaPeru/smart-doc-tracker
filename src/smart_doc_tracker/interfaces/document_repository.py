@@ -54,6 +54,14 @@ class DocumentRepository(Protocol):
         """Replace validated document fields while preserving record metadata."""
         ...
 
+    def set_source_file_name(
+        self,
+        document_id: str,
+        source_file_name: str,
+    ) -> StoredDocument | None:
+        """Attach one safe processed-file name to a stored document."""
+        ...
+
     def delete_document(self, document_id: str) -> StoredDocument | None:
         """Delete one document and its local structured sections."""
         ...

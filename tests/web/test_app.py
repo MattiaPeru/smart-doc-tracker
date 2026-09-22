@@ -22,6 +22,7 @@ def _record(
     *,
     expiry_date: str | None,
     city: str = "Rome",
+    source_file_name: str | None = None,
 ) -> StoredDocument:
     document = DocumentData(
         document_type="insurance_policy",
@@ -35,6 +36,7 @@ def _record(
         file_hash="a" * 64,
         document=document,
         created_at=datetime(2026, 8, 20, 10, 0, tzinfo=UTC),
+        source_file_name=source_file_name,
     )
 
 
@@ -103,10 +105,29 @@ class FakeRepository:
                     file_hash=record.file_hash,
                     document=document,
                     created_at=record.created_at,
+                    source_file_name=record.source_file_name,
                 )
                 self.records[index] = updated
                 return updated
         return None
+
+    def set_source_file_name(
+        self,
+        document_id: str,
+        source_file_name: str,
+    ) -> StoredDocument | None:
+        record = self.get_document_by_id(document_id)
+        if record is None:
+            return None
+        updated = StoredDocument(
+            id=record.id,
+            file_hash=record.file_hash,
+            document=record.document,
+            created_at=record.created_at,
+            source_file_name=source_file_name,
+        )
+        self.records[self.records.index(record)] = updated
+        return updated
 
     def delete_document(self, document_id: str) -> StoredDocument | None:
         record = self.get_document_by_id(document_id)
@@ -200,7 +221,11 @@ class WebApplicationTests(TestCase):
     def setUp(self) -> None:
         self.records = [
             _record("expired", expiry_date="2026-08-25"),
-            _record("soon", expiry_date="2026-09-10"),
+            _record(
+                "soon",
+                expiry_date="2026-09-10",
+                source_file_name="policy.pdf",
+            ),
             _record("valid", expiry_date="2027-01-01"),
             _record("none", expiry_date=None),
         ]
@@ -216,6 +241,9 @@ class WebApplicationTests(TestCase):
         ]
         self.generator = FakeGenerator()
         self.temporary_directory = TemporaryDirectory()
+        processed_path = Path(self.temporary_directory.name) / "processed"
+        processed_path.mkdir()
+        (processed_path / "policy.pdf").write_bytes(b"local pdf fixture")
         self.processed_paths: list[Path] = []
 
         def process(
@@ -238,7 +266,7 @@ class WebApplicationTests(TestCase):
                 today_provider=lambda: date(2026, 8, 26),
                 vector_index=self.vector_index,
                 rag_generator=self.generator,
-                processed_path=Path(self.temporary_directory.name) / "processed",
+                processed_path=processed_path,
             )
         )
         self.app = app
@@ -619,13 +647,30 @@ class WebApplicationTests(TestCase):
         )
         self.assertNotIn("/soon/", log_output)
 
-    def test_dashboard_loads_indexed_content_only_on_request(self) -> None:
+    def test_dashboard_opens_and_downloads_the_original_document(self) -> None:
         script = self.client.get("/static/js/dashboard.js")
 
         self.assertEqual(script.status_code, 200)
-        self.assertIn("Complete indexed content", script.text)
-        self.assertIn("/indexed-content`);", script.text)
-        self.assertIn("fragment.content", script.text)
+        self.assertIn("Original document", script.text)
+        self.assertIn("Open original", script.text)
+        self.assertIn("Download", script.text)
+        self.assertNotIn("Complete indexed content", script.text)
+
+        opened = self.client.get("/api/documents/soon/original")
+        downloaded = self.client.get(
+            "/api/documents/soon/original", params={"download": "true"}
+        )
+
+        self.assertEqual(opened.status_code, 200)
+        self.assertEqual(opened.content, b"local pdf fixture")
+        self.assertTrue(opened.headers["content-disposition"].startswith("inline"))
+        self.assertTrue(
+            downloaded.headers["content-disposition"].startswith("attachment")
+        )
+        self.assertEqual(
+            self.client.get("/api/documents/valid/original").status_code,
+            404,
+        )
 
     def test_upload_waits_for_confirmation_then_stores_and_archives(self) -> None:
         response = self.client.post(
@@ -669,11 +714,17 @@ class WebApplicationTests(TestCase):
 
         self.assertEqual(confirmed.status_code, 200)
         self.assertEqual(confirmed.json()["summary"], "User-confirmed summary")
+        self.assertEqual(confirmed.json()["original_file_name"], "policy.png")
         self.assertEqual(len(self.client.get("/api/pending-documents").json()), 0)
         self.assertFalse(self.processed_paths[0].exists())
         self.assertTrue(
             (Path(self.temporary_directory.name) / "processed" / "policy.png").exists()
         )
+        original = self.client.get(
+            f"/api/documents/{confirmed.json()['id']}/original"
+        )
+        self.assertEqual(original.status_code, 200)
+        self.assertEqual(original.content, b"local fixture")
         self.assertEqual(self.vector_index.upserts[0][0], "confirmed")
 
     def test_creates_manual_document_without_upload_processing(self) -> None:

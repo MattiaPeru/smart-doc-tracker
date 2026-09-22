@@ -117,60 +117,29 @@ function showDetail(item, loadContent = false) {
       <dt>Summary</dt><dd>${escapeHtml(item.summary)}</dd>
       <dt>Issue date</dt><dd>${escapeHtml(item.issue_date || "Not available")}</dd>
       <dt>Expiry date</dt><dd>${escapeHtml(item.expiry_date || "Not available")}</dd>
-      <dt>Record ID</dt><dd><code>${escapeHtml(item.id)}</code></dd>
     </dl>
     <h3>Extracted attributes</h3>
     <div class="attribute-column-labels attribute-view-labels" aria-hidden="true"><span>Field name</span><span>Value</span></div>
     <div id="extracted-attributes" class="attribute-view"></div>
-    <section class="indexed-content-section">
-      <div class="attributes-heading"><h3>Complete indexed content</h3>
-      <button id="load-indexed-content" class="secondary compact" type="button">Load content</button></div>
-      <p class="sensitive-hint">Shows all the content saved for this document.</p>
-      <div id="indexed-content" aria-live="polite"></div>
-    </section>
+    ${item.original_file_name ? `<section class="original-document-section">
+      <div><h3>Original document</h3>
+      <p class="sensitive-hint">${escapeHtml(item.original_file_name)}</p></div>
+      <div class="original-document-actions">
+        <a class="button-link secondary compact" href="/api/documents/${encodeURIComponent(item.id)}/original" target="_blank" rel="noopener">Open original</a>
+        <a class="button-link secondary compact" href="/api/documents/${encodeURIComponent(item.id)}/original?download=true">Download</a>
+      </div>
+    </section>` : ""}
     <div class="actions dialog-actions"><button id="edit-document" type="button">Edit</button>
     <button id="delete-document" class="danger-button" type="button">Delete</button></div>`;
   renderAttributeView(detail.querySelector("#extracted-attributes"), item.extracted_data);
-  detail.querySelector("#load-indexed-content").addEventListener("click", (event) => {
-    loadIndexedContent(item.id, event.currentTarget, detail.querySelector("#indexed-content"));
-  });
   detail.querySelector("#edit-document").addEventListener("click", () => {
     dialog.close();
     showEditor({ id: item.id, document: item }, "stored");
   });
   detail.querySelector("#delete-document").addEventListener("click", () => deleteDocument(item.id));
   dialog.showModal();
-  if (loadContent) detail.querySelector("#load-indexed-content").click();
-}
-
-async function loadIndexedContent(documentId, button, container) {
-  button.disabled = true;
-  button.textContent = "Loading...";
-  container.textContent = "Loading document content...";
-  try {
-    const response = await apiFetch(`/api/documents/${documentId}/indexed-content`);
-    if (!response.ok) {
-      throw requestError(response, "We couldn't load this document's content. Please try again.");
-    }
-    const payload = await response.json();
-    container.replaceChildren();
-    payload.fragments.forEach((fragment) => {
-      const article = document.createElement("article");
-      article.className = "indexed-fragment";
-      const heading = document.createElement("h4");
-      heading.textContent = `${fragment.source.replaceAll("_", " ")} · ${fragment.fragment_id}`;
-      const content = document.createElement("pre");
-      content.textContent = fragment.content;
-      article.append(heading, content);
-      container.append(article);
-    });
-    if (!payload.fragments.length) container.textContent = "No indexed content is available for this document.";
-    button.textContent = "Reload content";
-  } catch (error) {
-    container.textContent = userMessage(error, "We couldn't load this document's content. Please try again.");
-    button.textContent = "Try again";
-  } finally {
-    button.disabled = false;
+  if (loadContent && item.original_file_name) {
+    window.open(`/api/documents/${encodeURIComponent(item.id)}/original`, "_blank", "noopener");
   }
 }
 

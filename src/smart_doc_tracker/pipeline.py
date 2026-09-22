@@ -299,18 +299,22 @@ class InboxProcessingPipeline:
                 continue
 
             try:
-                self.folders.archive(source_path)
-            except InboxError as exc:
+                archived_path = self.folders.archive(source_path)
+                insert_result = processing_result.insert_result
+                if insert_result is None:
+                    raise RuntimeError(
+                        "Stored processing did not return a persistence result"
+                    )
+                self.repository.set_source_file_name(
+                    insert_result.record.id,
+                    archived_path.name,
+                )
+            except (InboxError, DatabaseError) as exc:
                 failed += 1
                 self._report_failure(source_path, "archiving", exc)
                 continue
 
             processed += 1
-            insert_result = processing_result.insert_result
-            if insert_result is None:
-                raise RuntimeError(
-                    "Stored processing did not return a persistence result"
-                )
             if not insert_result.inserted:
                 already_present += 1
 

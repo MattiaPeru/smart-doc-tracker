@@ -326,6 +326,7 @@ Fields:
 - `file_hash: str`
 - `document: DocumentData`
 - `created_at: datetime`
+- `source_file_name: str | None = None`
 
 ### `DocumentInsertResult`
 
@@ -352,6 +353,7 @@ Methods:
 - `get_document_by_id(self, document_id: str) -> StoredDocument | None` — Return one stored document, or None for an unknown or invalid identifier.
 - `get_all_documents(self) -> list[StoredDocument]` — Return every stored document in deterministic creation order.
 - `update_document(self, document_id: str, document: DocumentData) -> StoredDocument | None` — Replace validated document fields and preserve persistence metadata.
+- `set_source_file_name(self, document_id: str, source_file_name: str) -> StoredDocument | None` — Attach the safe processed-file name to one stored document.
 - `delete_document(self, document_id: str) -> StoredDocument | None` — Delete one document and its structured sections, returning its snapshot.
 - `get_expiring_documents(self, days_threshold: int, *, today: date | None = None) -> list[StoredDocument]` — Return documents expiring from today through the inclusive threshold.
 - `get_documents_expiring_in_year(self, year: int) -> list[StoredDocument]` — Return documents with an expiry date inside the requested calendar year.
@@ -530,6 +532,7 @@ Methods:
 - `get_all_documents(self) -> list[StoredDocument]` — Return every stored document.
 - `get_document_by_id(self, document_id: str) -> StoredDocument | None` — Return one stored document by identifier when present.
 - `update_document(self, document_id: str, document: DocumentData) -> StoredDocument | None` — Replace validated document fields while preserving record metadata.
+- `set_source_file_name(self, document_id: str, source_file_name: str) -> StoredDocument | None` — Attach one safe processed-file name to a stored document.
 - `delete_document(self, document_id: str) -> StoredDocument | None` — Delete one document and its local structured sections.
 - `get_expiring_documents(self, days_threshold: int, *, today: date | None = None) -> list[StoredDocument]` — Return documents expiring within an inclusive date window.
 - `get_documents_expiring_in_year(self, year: int) -> list[StoredDocument]` — Return documents whose normalized expiry date falls in one year.
@@ -839,7 +842,7 @@ Fields:
 Methods:
 
 - `create_manual(self, document: DocumentData) -> DocumentInsertResult` — Persist and index user-authored data without an OCR source file.
-- `confirm(self, document: DocumentData, *, file_hash: str, raw_text: str, sections: Sequence[StructuredDocumentSection] = (), finalize: Callable[[], object] | None = None) -> DocumentInsertResult` — Persist and index one confirmed document before finalizing its source.
+- `confirm(self, document: DocumentData, *, file_hash: str, raw_text: str, sections: Sequence[StructuredDocumentSection] = (), finalize: Callable[[], Path] | None = None) -> DocumentInsertResult` — Persist and index one confirmed document before finalizing its source.
 - `update(self, document_id: str, document: DocumentData) -> DocumentUpdateResult | None` — Store one update and durably schedule its local search refresh.
 - `delete(self, document_id: str) -> StoredDocument | None` — Delete from ChromaDB and MongoDB, restoring ChromaDB if MongoDB fails.
 
@@ -1272,6 +1275,7 @@ Fields:
 - `extracted_data: dict[str, Any]`
 - `created_at: datetime`
 - `expiration_status: Literal['expired', 'soon', 'valid', 'none']`
+- `original_file_name: str | None`
 
 Methods:
 

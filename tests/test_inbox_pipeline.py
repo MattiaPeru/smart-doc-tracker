@@ -44,6 +44,7 @@ class FakeWriter:
     def __init__(self) -> None:
         self.calls: list[tuple[DocumentData, str]] = []
         self.section_calls: list[tuple[str, tuple[StructuredDocumentSection, ...]]] = []
+        self.source_files: list[tuple[str, str]] = []
 
     def insert_document(
         self, document: DocumentData, *, file_hash: str
@@ -65,6 +66,14 @@ class FakeWriter:
         sections: tuple[StructuredDocumentSection, ...],
     ) -> None:
         self.section_calls.append((document_id, sections))
+
+    def set_source_file_name(
+        self,
+        document_id: str,
+        source_file_name: str,
+    ) -> StoredDocument | None:
+        self.source_files.append((document_id, source_file_name))
+        return None
 
 
 class FakePDFExtractor:

@@ -101,6 +101,24 @@ class FakeRepository:
                 return updated
         return None
 
+    def set_source_file_name(
+        self,
+        document_id: str,
+        source_file_name: str,
+    ) -> StoredDocument | None:
+        record = self.get_document_by_id(document_id)
+        if record is None:
+            return None
+        updated = StoredDocument(
+            id=record.id,
+            file_hash=record.file_hash,
+            document=record.document,
+            created_at=record.created_at,
+            source_file_name=source_file_name,
+        )
+        self.documents[self.documents.index(record)] = updated
+        return updated
+
     def get_expiring_documents(
         self, days_threshold: int, *, today: date | None = None
     ) -> list[StoredDocument]:

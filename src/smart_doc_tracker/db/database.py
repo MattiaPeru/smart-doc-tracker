@@ -6,6 +6,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
+from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlsplit
 
@@ -40,6 +41,7 @@ class StoredDocument:
     file_hash: str
     document: DocumentData
     created_at: datetime
+    source_file_name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -258,6 +260,28 @@ class MongoDocumentRepository:
             raise DatabaseError("The document could not be updated locally.") from exc
         return _to_stored_document(stored) if stored is not None else None
 
+    def set_source_file_name(
+        self,
+        document_id: str,
+        source_file_name: str,
+    ) -> StoredDocument | None:
+        """Attach the safe processed-file name to one stored document."""
+        if not ObjectId.is_valid(document_id):
+            return None
+        normalized_name = _validate_source_file_name(source_file_name)
+        identifier = ObjectId(document_id)
+        try:
+            self._collection.update_one(
+                {"_id": identifier},
+                {"$set": {"source_file_name": normalized_name}},
+            )
+            stored = self._collection.find_one({"_id": identifier})
+        except PyMongoError as exc:
+            raise DatabaseError(
+                "The document source reference could not be stored locally."
+            ) from exc
+        return _to_stored_document(stored) if stored is not None else None
+
     def delete_document(self, document_id: str) -> StoredDocument | None:
         """Delete one document and its structured sections, returning its snapshot."""
         if not ObjectId.is_valid(document_id):
@@ -361,6 +385,22 @@ def _validate_file_hash(value: str) -> str:
     return normalized
 
 
+def _validate_source_file_name(value: str) -> str:
+    """Require one plain file name without directory traversal components."""
+    if not isinstance(value, str):
+        raise ValueError("source_file_name must be a file name")
+    normalized = value.strip()
+    if (
+        not normalized
+        or normalized in {".", ".."}
+        or Path(normalized).name != normalized
+        or "/" in normalized
+        or "\\" in normalized
+    ):
+        raise ValueError("source_file_name must not contain a directory path")
+    return normalized
+
+
 def _date_to_datetime(value: date | None) -> datetime | None:
     """Convert a date to a UTC midnight datetime."""
     if value is None:
@@ -399,6 +439,11 @@ def _to_stored_document(payload: dict[str, Any]) -> StoredDocument:
             file_hash=_validate_file_hash(payload["file_hash"]),
             document=document,
             created_at=created_at.astimezone(UTC),
+            source_file_name=(
+                _validate_source_file_name(payload["source_file_name"])
+                if payload.get("source_file_name") is not None
+                else None
+            ),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise DatabaseError("The stored document data is invalid.") from exc

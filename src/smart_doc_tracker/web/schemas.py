@@ -64,6 +64,7 @@ class DocumentResponse(BaseModel):
     extracted_data: dict[str, Any]
     created_at: datetime
     expiration_status: Literal["expired", "soon", "valid", "none"]
+    original_file_name: str | None
 
     @classmethod
     def from_record(
@@ -93,6 +94,7 @@ class DocumentResponse(BaseModel):
             extracted_data=record.document.extracted_data,
             created_at=record.created_at,
             expiration_status=status,
+            original_file_name=record.source_file_name,
         )
 
 

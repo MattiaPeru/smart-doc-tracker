@@ -26,7 +26,7 @@ from fastapi import (
     Request,
     UploadFile,
 )
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.responses import Response
@@ -410,6 +410,34 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
             record,
             today=resolved.today_provider(),
             alert_days=alert_days,
+        )
+
+    @app.get("/api/documents/{document_id}/original")
+    def get_document_original(
+        document_id: str,
+        repository: Repository,
+        download: bool = False,
+    ) -> FileResponse:
+        """Open or download the original file from the local processed archive."""
+        record = repository.get_document_by_id(document_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Document not found.")
+        if record.source_file_name is None:
+            raise HTTPException(
+                status_code=404,
+                detail="The original file is not available for this document.",
+            )
+        processed_root = resolved.processed_path.expanduser().resolve()
+        source_path = (processed_root / record.source_file_name).resolve()
+        if source_path.parent != processed_root or not source_path.is_file():
+            raise HTTPException(
+                status_code=404,
+                detail="The original file is not available for this document.",
+            )
+        return FileResponse(
+            source_path,
+            filename=record.source_file_name,
+            content_disposition_type="attachment" if download else "inline",
         )
 
     @app.get(

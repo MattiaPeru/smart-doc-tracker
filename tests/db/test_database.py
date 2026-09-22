@@ -184,6 +184,25 @@ class MongoDocumentRepositoryTests(TestCase):
         self.assertIsInstance(self.collection.documents[0]["issue_date"], datetime)
         self.assertIsNone(self.repository.update_document("invalid", replacement))
 
+    def test_attaches_a_safe_processed_file_name(self) -> None:
+        inserted = self.repository.insert_document(
+            _document(), file_hash=self.file_hash, created_at=self.created_at
+        ).record
+
+        updated = self.repository.set_source_file_name(inserted.id, "policy.pdf")
+
+        self.assertIsNotNone(updated)
+        assert updated is not None
+        self.assertEqual(updated.source_file_name, "policy.pdf")
+        self.assertEqual(
+            self.repository.get_document_by_id(inserted.id).source_file_name,
+            "policy.pdf",
+        )
+        for unsafe_name in ("../policy.pdf", "folder/policy.pdf", "folder\\policy.pdf"):
+            with self.subTest(unsafe_name=unsafe_name):
+                with self.assertRaises(ValueError):
+                    self.repository.set_source_file_name(inserted.id, unsafe_name)
+
     def test_get_expiring_documents_uses_inclusive_day_threshold(self) -> None:
         expected = self.repository.insert_document(
             _document(expiry_date="2030-01-10"),

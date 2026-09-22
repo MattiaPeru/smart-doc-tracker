@@ -5,6 +5,7 @@ from __future__ import annotations
 from _thread import LockType
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from secrets import token_hex
 from threading import Lock
 
@@ -54,7 +55,7 @@ class DocumentMutationPipeline:
         file_hash: str,
         raw_text: str,
         sections: Sequence[StructuredDocumentSection] = (),
-        finalize: Callable[[], object] | None = None,
+        finalize: Callable[[], Path] | None = None,
     ) -> DocumentInsertResult:
         """Persist and index one confirmed document before finalizing its source."""
         document.ensure_complete_dynamic_values()
@@ -74,7 +75,19 @@ class DocumentMutationPipeline:
                         document=document,
                     )
                 if finalize is not None:
-                    finalize()
+                    archived_path = finalize()
+                    archived_record = repository.set_source_file_name(
+                        inserted.record.id,
+                        archived_path.name,
+                    )
+                    if archived_record is None:
+                        raise CoordinatedMutationError(
+                            "The archived source could not be linked to its document."
+                        )
+                    inserted = DocumentInsertResult(
+                        record=archived_record,
+                        inserted=inserted.inserted,
+                    )
                 return inserted
         except Exception as exc:
             compensated = True
