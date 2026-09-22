@@ -7,7 +7,7 @@ import logging
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from enum import StrEnum
 from html import unescape
 from pathlib import Path
@@ -1057,14 +1057,29 @@ class ExpirationTrackingPipeline:
     today_provider: Callable[[], date] = date.today
 
     def check(self, days_threshold: int = 30) -> ExpirationCheckResult:
-        """Notify once for each document expiring inside the inclusive window."""
+        """Notify for each document using its override or the supplied default."""
         if days_threshold < 0:
             raise ValueError("days_threshold cannot be negative")
 
-        documents = self.repository.get_expiring_documents(
+        today = self.today_provider()
+        default_documents = self.repository.get_expiring_documents(
             days_threshold,
-            today=self.today_provider(),
+            today=today,
         )
+        documents = [
+            record
+            for record in default_documents
+            if record.document.notification_days_before is None
+        ]
+        for record in self.repository.get_all_documents():
+            expiry_date = record.document.expiry_date
+            effective_days = record.document.notification_days_before
+            if (
+                effective_days is not None
+                and expiry_date is not None
+                and today <= expiry_date <= today + timedelta(days=effective_days)
+            ):
+                documents.append(record)
         notifications_sent = 0
         for record in documents:
             expiry_date = record.document.expiry_date

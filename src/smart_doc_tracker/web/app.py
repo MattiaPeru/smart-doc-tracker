@@ -59,6 +59,11 @@ from ..interfaces.text_generator import TextGenerator
 from ..models.document import DocumentData
 from ..models.rag import ConversationTurn
 from ..mutation_pipeline import CoordinatedMutationError, DocumentMutationPipeline
+from ..settings import (
+    LocalReminderSettingsStore,
+    ReminderSettings,
+    ReminderSettingsError,
+)
 from ..pipeline import (
     DocumentProcessingPipeline,
     DocumentProcessingResult,
@@ -82,6 +87,7 @@ from .schemas import (
     DocumentUpdateResponse,
     IndexUpdateJobResponse,
     PendingDocumentResponse,
+    ReminderSettingsResponse,
     UploadJobResponse,
 )
 
@@ -133,6 +139,7 @@ class WebDependencies:
     processed_path: Path = Path("data/processed")
     repository_closer: Callable[[], None] | None = None
     chat_memory: TemporaryChatMemory | None = None
+    reminder_settings: LocalReminderSettingsStore | None = None
 
 
 def default_web_dependencies() -> WebDependencies:
@@ -177,6 +184,9 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
     resolved = dependencies or default_web_dependencies()
     chat_memory = resolved.chat_memory or TemporaryChatMemory()
     data_path = resolved.processed_path.parent
+    reminder_settings = resolved.reminder_settings or LocalReminderSettingsStore(
+        data_path / "settings.json"
+    )
     pending_documents = PendingDocumentService(
         resolved.processed_path,
         data_path / "pending_confirmation",
@@ -294,14 +304,28 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
 
     Repository = Annotated[DocumentRepository, Depends(repository)]
 
+    def default_reminder_days() -> int:
+        """Read the local default or expose one sanitized service error."""
+        try:
+            return reminder_settings.load().default_notification_days_before
+        except ReminderSettingsError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="The local reminder settings are unavailable.",
+            ) from exc
+
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
     def dashboard(request: Request) -> HTMLResponse:
         """Render the local single-page document dashboard."""
+        try:
+            default_days = reminder_settings.load().default_notification_days_before
+        except ReminderSettingsError:
+            default_days = 30
         response = templates.TemplateResponse(
             request=request,
             name="dashboard.html",
             context={
-                "alert_days": 30,
+                "alert_days": default_days,
                 "csrf_token": csrf_token,
                 "max_upload_mb": 25,
             },
@@ -309,12 +333,38 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
         response.headers["Cache-Control"] = "no-store, max-age=0"
         return response
 
+    @app.get("/api/settings/reminders", response_model=ReminderSettingsResponse)
+    def get_reminder_settings() -> ReminderSettingsResponse:
+        """Return the locally persisted default expiration reminder."""
+        try:
+            return ReminderSettingsResponse.model_validate(
+                reminder_settings.load().model_dump()
+            )
+        except ReminderSettingsError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="The local reminder settings are unavailable.",
+            ) from exc
+
+    @app.put("/api/settings/reminders", response_model=ReminderSettingsResponse)
+    def update_reminder_settings(
+        settings: ReminderSettings,
+    ) -> ReminderSettingsResponse:
+        """Persist the default reminder used by documents without an override."""
+        try:
+            saved = reminder_settings.save(settings)
+            return ReminderSettingsResponse.model_validate(saved.model_dump())
+        except ReminderSettingsError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="The local reminder settings could not be saved.",
+            ) from exc
+
     @app.get("/api/documents", response_model=list[DocumentResponse])
     def list_documents(
         repository: Repository,
         field_key: Annotated[str | None, Query(max_length=200)] = None,
         field_value: Annotated[str | None, Query(max_length=10_000)] = None,
-        alert_days: Annotated[int, Query(ge=0, le=3_650)] = 30,
     ) -> list[DocumentResponse]:
         """List documents or exactly match one validated dynamic JSON path."""
         if (field_key is None) != (field_value is None):
@@ -334,6 +384,7 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         today = resolved.today_provider()
+        alert_days = default_reminder_days()
         return [
             DocumentResponse.from_record(
                 record,
@@ -448,12 +499,12 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
     def get_document(
         document_id: str,
         repository: Repository,
-        alert_days: Annotated[int, Query(ge=0, le=3_650)] = 30,
     ) -> DocumentResponse:
         """Return one locally stored document."""
         record = repository.get_document_by_id(document_id)
         if record is None:
             raise HTTPException(status_code=404, detail="Document not found.")
+        alert_days = default_reminder_days()
         return DocumentResponse.from_record(
             record,
             today=resolved.today_provider(),
@@ -522,6 +573,7 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
         document: DocumentData,
     ) -> DocumentUpdateResponse:
         """Store one document update and queue its local search refresh."""
+        alert_days = default_reminder_days()
         service = _require_mutation_service(mutations)
         try:
             updated = service.update(document_id, document)
@@ -535,12 +587,13 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
             updated.record,
             index_update_id=updated.index_update_id,
             today=resolved.today_provider(),
-            alert_days=30,
+            alert_days=alert_days,
         )
 
     @app.post("/api/documents/manual", response_model=DocumentResponse)
     def create_manual_document(document: DocumentData) -> DocumentResponse:
         """Validate, persist, and index a document entered entirely by the user."""
+        alert_days = default_reminder_days()
         service = _require_mutation_service(mutations)
         try:
             result = service.create_manual(document)
@@ -551,7 +604,7 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
         return DocumentResponse.from_record(
             result.record,
             today=resolved.today_provider(),
-            alert_days=30,
+            alert_days=alert_days,
         )
 
     @app.get(
@@ -604,6 +657,7 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
         document: DocumentData,
     ) -> DocumentResponse:
         """Validate user edits before persistence, indexing, and archiving."""
+        alert_days = default_reminder_days()
         pending = pending_documents.get(pending_id)
         if pending is None:
             raise HTTPException(status_code=404, detail="Pending document not found.")
@@ -624,7 +678,7 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
         return DocumentResponse.from_record(
             result.record,
             today=resolved.today_provider(),
-            alert_days=30,
+            alert_days=alert_days,
         )
 
     @app.delete("/api/pending-documents/{pending_id}", status_code=204)

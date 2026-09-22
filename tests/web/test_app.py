@@ -299,6 +299,42 @@ class WebApplicationTests(TestCase):
             ["expired", "soon", "valid", "none"],
         )
 
+    def test_saves_default_reminder_and_uses_document_override(self) -> None:
+        saved = self.client.put(
+            "/api/settings/reminders",
+            json={"default_notification_days_before": 10},
+        )
+
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(saved.json()["default_notification_days_before"], 10)
+        self.assertEqual(
+            self.client.get("/api/settings/reminders").json(),
+            {"default_notification_days_before": 10},
+        )
+        documents = self.client.get("/api/documents").json()
+        soon = next(item for item in documents if item["id"] == "soon")
+        self.assertEqual(soon["expiration_status"], "valid")
+        self.assertIsNone(soon["notification_days_before"])
+        self.assertEqual(soon["effective_notification_days_before"], 10)
+
+        payload = self.records[1].document.model_dump(mode="json")
+        payload["notification_days_before"] = 20
+        updated = self.client.put("/api/documents/soon", json=payload)
+
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(updated.json()["expiration_status"], "soon")
+        self.assertEqual(updated.json()["notification_days_before"], 20)
+        self.assertEqual(updated.json()["effective_notification_days_before"], 20)
+
+    def test_dashboard_exposes_default_and_document_reminder_controls(self) -> None:
+        dashboard = self.client.get("/").text
+        script = self.client.get("/static/js/dashboard.js").text
+
+        self.assertIn('id="reminder-settings-form"', dashboard)
+        self.assertIn('id="default-reminder-days"', dashboard)
+        self.assertIn('name="notification_days_before"', script)
+        self.assertIn("days before (default value)", script)
+
     def test_answers_chat_questions_with_clickable_document_references(self) -> None:
         with self.assertLogs("smart_doc_tracker.pipeline", level="INFO") as captured:
             response = self.client.post(

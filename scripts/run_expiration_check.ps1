@@ -1,5 +1,7 @@
 [CmdletBinding()]
 param(
+    # Accepted for compatibility with previously installed scheduled tasks.
+    # The saved dashboard default is authoritative.
     [ValidateRange(0, 3650)]
     [int]$DaysThreshold = 30,
 
@@ -146,7 +148,7 @@ try {
     Start-StorageServices -DockerCli $dockerCli -TimeoutSeconds $MongoTimeoutSeconds
 
     & $pythonPath -m smart_doc_tracker `
-        --days-threshold $DaysThreshold `
+        --complete-pipeline `
         --language $OcrLanguage
     $pipelineExitCode = $LASTEXITCODE
     if ($pipelineExitCode -ne 0) {

@@ -14,6 +14,9 @@ class FakeExpirationRepository:
         self.documents = documents
         self.calls: list[tuple[int, date | None]] = []
 
+    def get_all_documents(self) -> list[StoredDocument]:
+        return list(self.documents)
+
     def get_expiring_documents(
         self, days_threshold: int, *, today: date | None = None
     ) -> list[StoredDocument]:
@@ -29,15 +32,20 @@ class FakeNotifier:
         self.notifications.append(notification)
 
 
-def _stored_document() -> StoredDocument:
+def _stored_document(
+    *,
+    expiry_date: str = "2026-08-30",
+    notification_days_before: int | None = None,
+) -> StoredDocument:
     return StoredDocument(
         id="64b64b64b64b64b64b64b64b",
         file_hash="a" * 64,
         document=DocumentData(
             document_type="insurance_policy",
             summary="Policy for a private vehicle",
-            expiry_date="2026-08-30",
+            expiry_date=expiry_date,
             issue_date="2025-08-30",
+            notification_days_before=notification_days_before,
             extracted_data={"policy_number": "PRIVATE-123"},
         ),
         created_at=datetime(2026, 8, 1, tzinfo=UTC),
@@ -69,6 +77,29 @@ class ExpirationTrackingPipelineTests(TestCase):
             ],
         )
         self.assertNotIn("PRIVATE-123", notifier.notifications[0].message)
+
+    def test_uses_each_document_override_and_falls_back_to_default(self) -> None:
+        repository = FakeExpirationRepository(
+            [
+                _stored_document(
+                    expiry_date="2026-09-20", notification_days_before=45
+                ),
+                _stored_document(
+                    expiry_date="2026-08-20", notification_days_before=3
+                ),
+                _stored_document(expiry_date="2026-08-30"),
+            ]
+        )
+        notifier = FakeNotifier()
+
+        result = ExpirationTrackingPipeline(
+            repository,
+            notifier,
+            today_provider=lambda: date(2026, 8, 12),
+        ).check(30)
+
+        self.assertEqual(result.documents_found, 2)
+        self.assertEqual(result.notifications_sent, 2)
 
     def test_rejects_negative_threshold_before_querying(self) -> None:
         repository = FakeExpirationRepository([])

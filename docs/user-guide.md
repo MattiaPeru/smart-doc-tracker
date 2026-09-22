@@ -137,6 +137,10 @@ dates when recognized, providing deterministic results.
 
 ## Expiration reminders
 
+Set the default reminder in the left side of the dashboard. Documents inherit that
+value dynamically unless their edit form contains a custom number of days. Leaving
+the document-specific field empty restores inheritance from the current default.
+
 Run one check:
 
 ```powershell
@@ -148,6 +152,8 @@ Run a foreground daily monitor:
 ```powershell
 smart-doc-tracker --monitor-expirations --check-time 09:00 --days-threshold 30
 ```
+
+Omit `--days-threshold` in either expiration-only mode to use the dashboard default.
 
 The window is inclusive from today through the threshold. Documents already expired
 before today are not included. Desktop notifications disclose only the normalized
@@ -193,6 +199,7 @@ The implemented dashboard provides:
 - validated edits with durable background refresh of indexed metadata;
 - exact dynamic-field filters;
 - expiration status and in-page alerts;
+- a persistent default reminder and optional per-document reminder overrides;
 - confirmed deletion from MongoDB and the active ChromaDB collection.
 
 Uploads accept supported images and PDFs up to 25 MB. The server copies an accepted

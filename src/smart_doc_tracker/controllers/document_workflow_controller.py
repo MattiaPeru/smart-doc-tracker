@@ -54,7 +54,7 @@ class DocumentWorkflowController:
         if args.ask_documents is not None:
             return RagWorkflowController(self.dependencies).ask_documents(args)
 
-        days_threshold = args.days_threshold if args.days_threshold is not None else 30
+        days_threshold = args.days_threshold
         if args.check_expirations:
             return ExpirationWorkflowController(self.dependencies).check_expirations(
                 days_threshold
@@ -65,7 +65,9 @@ class DocumentWorkflowController:
             )
         if args.process_inbox:
             return InboxWorkflowController(self.dependencies).process_inbox(args)
-        if args.image is None and args.days_threshold is not None:
+        if args.complete_pipeline or (
+            args.image is None and args.days_threshold is not None
+        ):
             return InboxWorkflowController(self.dependencies).run_complete_pipeline(
                 args
             )

@@ -15,6 +15,7 @@ from ..db.database import (
 from ..notifier.desktop import DesktopNotificationError, PlyerDesktopNotifier
 from ..pipeline import ExpirationTrackingPipeline
 from ..scheduler import DailyTaskScheduler, SchedulerConfigurationError, SchedulerError
+from ..settings import LocalReminderSettingsStore, ReminderSettingsError
 
 
 @dataclass(slots=True)
@@ -23,12 +24,14 @@ class ExpirationWorkflowController:
 
     dependencies: CliDependencies
 
-    def check_expirations(self, days_threshold: int = 30) -> int:
+    def check_expirations(self, days_threshold: int | None = None) -> int:
         """Run one expiration check and print its summary."""
         dependencies = self.dependencies
         try:
+            effective_threshold = self._days_threshold(days_threshold)
             print(
-                f"[1/1] Checking documents expiring within {days_threshold} day(s)...",
+                "[1/1] Checking documents expiring using "
+                f"a {effective_threshold}-day default...",
                 file=dependencies.stderr,
                 flush=True,
             )
@@ -40,11 +43,12 @@ class ExpirationWorkflowController:
                 result = ExpirationTrackingPipeline(
                     repository,
                     notifier,
-                ).check(days_threshold)
+                ).check(effective_threshold)
         except (
             DatabaseConfigurationError,
             DatabaseError,
             DesktopNotificationError,
+            ReminderSettingsError,
         ) as exc:
             print(f"Expiration check failed: {exc}", file=dependencies.stderr)
             return 1
@@ -64,12 +68,17 @@ class ExpirationWorkflowController:
 
     def monitor_expirations(
         self,
-        days_threshold: int = 30,
+        days_threshold: int | None = None,
         *,
         check_time: time,
     ) -> int:
         """Schedule recurring local expiration checks in the foreground."""
         dependencies = self.dependencies
+        try:
+            self._days_threshold(days_threshold)
+        except ReminderSettingsError as exc:
+            print(f"Expiration monitoring failed: {exc}", file=dependencies.stderr)
+            return 1
         create_repository = (
             dependencies.repository_factory or MongoDocumentRepository.connect
         )
@@ -78,11 +87,12 @@ class ExpirationWorkflowController:
         def scheduled_check() -> None:
             """Execute one scheduled expiration check and report its outcome."""
             try:
+                effective_threshold = self._days_threshold(days_threshold)
                 with create_repository() as repository:
                     result = ExpirationTrackingPipeline(
                         repository,
                         notifier,
-                    ).check(days_threshold)
+                    ).check(effective_threshold)
                 print(
                     "Daily expiration check completed: "
                     f"{result.documents_found} document(s), "
@@ -94,6 +104,7 @@ class ExpirationWorkflowController:
                 DatabaseConfigurationError,
                 DatabaseError,
                 DesktopNotificationError,
+                ReminderSettingsError,
             ) as exc:
                 print(
                     f"Daily expiration check failed: {exc}",
@@ -116,3 +127,10 @@ class ExpirationWorkflowController:
             print(f"Expiration monitoring failed: {exc}", file=dependencies.stderr)
             return 1
         return 0
+
+    def _days_threshold(self, override: int | None) -> int:
+        """Resolve an explicit CLI override or the durable local default."""
+        if override is not None:
+            return override
+        store = self.dependencies.reminder_settings or LocalReminderSettingsStore()
+        return store.load().default_notification_days_before

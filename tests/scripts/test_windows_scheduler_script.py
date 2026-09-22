@@ -17,7 +17,7 @@ class WindowsSchedulerScriptTests(TestCase):
 
         self.assertIn("scripts\\run_expiration_check.ps1", script)
         self.assertIn("-ExecutionPolicy Bypass -File", script)
-        self.assertIn("-DaysThreshold", script)
+        self.assertNotIn("-DaysThreshold", script)
         self.assertIn("-OcrLanguage", script)
         self.assertIn("-WaitForInput", script)
         self.assertIn("-WindowStyle Normal", script)
@@ -36,7 +36,7 @@ class WindowsSchedulerScriptTests(TestCase):
 
         docker_position = script.index("Start-DockerDaemon -DockerCli")
         storage_position = script.index("Start-StorageServices -DockerCli")
-        pipeline_position = script.index("--days-threshold $DaysThreshold")
+        pipeline_position = script.index("--complete-pipeline")
         self.assertLess(docker_position, storage_position)
         self.assertLess(storage_position, pipeline_position)
         self.assertIn("up -d --pull never mongodb chromadb", script)
@@ -59,6 +59,7 @@ class WindowsSchedulerScriptTests(TestCase):
         self.assertEqual(script.count("& $pythonPath -m smart_doc_tracker"), 1)
         self.assertNotIn("--process-inbox", script)
         self.assertNotIn("--check-expirations", script)
+        self.assertIn("--complete-pipeline", script)
 
     def test_runner_uses_only_loopback_project_services(self) -> None:
         script = RUNNER_SCRIPT_PATH.read_text(encoding="utf-8")

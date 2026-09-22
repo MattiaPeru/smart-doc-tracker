@@ -21,7 +21,7 @@
       <section class="metrics" aria-label="Document summary">
         <article><span id="total-count">–</span><small>Documents</small></article>
         <article class="danger"><span id="expired-count">–</span><small>Expired</small></article>
-        <article class="warning"><span id="soon-count">–</span><small>Due in {{ alert_days }} days</small></article>
+        <article class="warning"><span id="soon-count">–</span><small>Due using each reminder</small></article>
         <article class="success"><span id="valid-count">–</span><small>Valid</small></article>
       </section>
 
@@ -40,6 +40,20 @@
 
       <section class="workspace">
         <aside>
+          <section class="panel reminder-settings">
+            <h2>Default reminder</h2>
+            <p>Used by every document unless you choose a custom value.</p>
+            <form id="reminder-settings-form">
+              <label for="default-reminder-days">Days before expiration</label>
+              <div class="reminder-setting-control">
+                <input id="default-reminder-days" name="default_notification_days_before"
+                       type="number" min="0" max="3650" value="{{ alert_days }}" required>
+                <span>days before</span>
+              </div>
+              <button type="submit">Save default</button>
+            </form>
+          </section>
+
           <section class="panel">
             <h2>Upload a document</h2>
             <p>PDF or image, up to {{ max_upload_mb }} MB. Processing stays on this host.</p>
@@ -60,7 +74,7 @@
           <section class="legend panel" aria-label="Expiration legend">
             <h2>Expiration alerts</h2>
             <span><i class="dot expired"></i>Expired</span>
-            <span><i class="dot soon"></i>Due within {{ alert_days }} days</span>
+            <span><i class="dot soon"></i>Due within its reminder period</span>
             <span><i class="dot valid"></i>Valid</span>
             <span><i class="dot none"></i>No expiry date</span>
           </section>

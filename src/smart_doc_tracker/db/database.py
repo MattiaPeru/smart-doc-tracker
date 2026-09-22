@@ -428,6 +428,9 @@ def _to_stored_document(payload: dict[str, Any]) -> StoredDocument:
                 "extracted_data",
             )
         }
+        document_payload["notification_days_before"] = payload.get(
+            "notification_days_before"
+        )
         created_at = payload["created_at"]
         if not isinstance(created_at, datetime):
             raise TypeError("created_at must be a datetime")

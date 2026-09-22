@@ -7,9 +7,6 @@ param(
     [ValidatePattern("^([01]\d|2[0-3]):[0-5]\d$")]
     [string]$CheckTime = "09:00",
 
-    [ValidateRange(0, 3650)]
-    [int]$DaysThreshold = 30,
-
     [ValidatePattern("^[A-Za-z][A-Za-z0-9_+.-]*$")]
     [string]$OcrLanguage = "eng"
 )
@@ -47,8 +44,8 @@ $parsedTime = [DateTime]::ParseExact(
 )
 $dailyStart = [DateTime]::Today.Add($parsedTime.TimeOfDay)
 $taskArguments = `
-    '-NoProfile -WindowStyle Normal -ExecutionPolicy Bypass -File "{0}" -DaysThreshold {1} -OcrLanguage "{2}" -WaitForInput' -f `
-    $runnerScript, $DaysThreshold, $OcrLanguage
+    '-NoProfile -WindowStyle Normal -ExecutionPolicy Bypass -File "{0}" -OcrLanguage "{1}" -WaitForInput' -f `
+    $runnerScript, $OcrLanguage
 
 $taskAction = New-ScheduledTaskAction `
     -Execute $powerShellPath `

@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..db.database import StoredDocument
 from ..models.document import DocumentData
 from ..models.rag import AnswerClaim, IndexedDocumentFragment
+from ..settings import ReminderSettings
 from .index_jobs import IndexUpdateJob
 from .jobs import UploadJob
 from .pending import PendingDocument
@@ -69,6 +70,8 @@ class DocumentResponse(BaseModel):
     summary: str
     expiry_date: date | None
     issue_date: date | None
+    notification_days_before: int | None
+    effective_notification_days_before: int
     extracted_data: dict[str, Any]
     created_at: datetime
     expiration_status: Literal["expired", "soon", "valid", "none"]
@@ -84,12 +87,17 @@ class DocumentResponse(BaseModel):
     ) -> DocumentResponse:
         """Create a response and classify its expiration color."""
         expiry_date = record.document.expiry_date
+        effective_days = (
+            record.document.notification_days_before
+            if record.document.notification_days_before is not None
+            else alert_days
+        )
         status: Literal["expired", "soon", "valid", "none"]
         if expiry_date is None:
             status = "none"
         elif expiry_date < today:
             status = "expired"
-        elif (expiry_date - today).days <= alert_days:
+        elif (expiry_date - today).days <= effective_days:
             status = "soon"
         else:
             status = "valid"
@@ -99,11 +107,17 @@ class DocumentResponse(BaseModel):
             summary=record.document.summary,
             expiry_date=expiry_date,
             issue_date=record.document.issue_date,
+            notification_days_before=record.document.notification_days_before,
+            effective_notification_days_before=effective_days,
             extracted_data=record.document.extracted_data,
             created_at=record.created_at,
             expiration_status=status,
             original_file_name=record.source_file_name,
         )
+
+
+class ReminderSettingsResponse(ReminderSettings):
+    """Browser-visible reminder defaults stored only on the local host."""
 
 
 class DocumentUpdateResponse(DocumentResponse):

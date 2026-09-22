@@ -412,6 +412,8 @@ export function editorPayload(form) {
   return {
     document_type: data.get("document_type"), summary: data.get("summary"),
     issue_date: data.get("issue_date") || null, expiry_date: data.get("expiry_date") || null,
+    notification_days_before: data.get("notification_days_before") === ""
+      ? null : Number(data.get("notification_days_before")),
     extracted_data: extractedData,
   };
 }

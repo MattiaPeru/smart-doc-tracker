@@ -68,7 +68,7 @@ removed separately through an approved, path-verified maintenance procedure.
 Install or update the daily task:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\manage_expiration_task.ps1 Install -CheckTime 09:00 -DaysThreshold 30 -OcrLanguage ita
+powershell -ExecutionPolicy Bypass -File scripts\manage_expiration_task.ps1 Install -CheckTime 09:00 -OcrLanguage ita
 ```
 
 The task runs as the current interactive user with limited privileges. It can wake a
@@ -76,6 +76,8 @@ sleeping computer and run after a missed start, but it cannot run while the comp
 is powered off. The runner starts Docker Desktop if required, starts MongoDB and
 ChromaDB with `--pull never`, waits for health, then processes the inbox and checks
 expirations.
+The expiration check reads the current dashboard reminder default at every run, so
+changing the setting does not require reinstalling the task.
 
 Remove the task:
 

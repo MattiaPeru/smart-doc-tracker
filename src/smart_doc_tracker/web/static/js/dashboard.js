@@ -10,6 +10,7 @@ const dialog = document.querySelector("#document-dialog");
 const reviewDialog = document.querySelector("#review-dialog");
 const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
 let conversationId = crypto.randomUUID();
+let defaultReminderDays = 30;
 
 function apiFetch(resource, options = {}) {
   const method = (options.method || "GET").toUpperCase();
@@ -25,6 +26,13 @@ function expirationLabel(document) {
   if (!document.expiry_date) return "No expiry date";
   const labels = { expired: "Expired", soon: "Due soon", valid: "Valid" };
   return `${labels[document.expiration_status]} · ${document.expiry_date}`;
+}
+
+function reminderLabel(document) {
+  const days = document.effective_notification_days_before;
+  return document.notification_days_before === null
+    ? `${days} days before (default)`
+    : `${days} days before (custom)`;
 }
 
 function escapeHtml(value) {
@@ -117,6 +125,7 @@ function showDetail(item, loadContent = false) {
       <dt>Summary</dt><dd>${escapeHtml(item.summary)}</dd>
       <dt>Issue date</dt><dd>${escapeHtml(item.issue_date || "Not available")}</dd>
       <dt>Expiry date</dt><dd>${escapeHtml(item.expiry_date || "Not available")}</dd>
+      <dt>Reminder</dt><dd>${escapeHtml(reminderLabel(item))}</dd>
     </dl>
     <h3>Other attributes</h3>
     <div class="attribute-column-labels attribute-view-labels" aria-hidden="true"><span>Field name</span><span>Value</span></div>
@@ -161,6 +170,10 @@ function showEditor(item, mode) {
         <div><label for="edit-issue-date">Issue date</label><input id="edit-issue-date" name="issue_date" type="date" value="${escapeHtml(documentData.issue_date || "")}"></div>
         <div><label for="edit-expiry-date">Expiry date</label><input id="edit-expiry-date" name="expiry_date" type="date" value="${escapeHtml(documentData.expiry_date || "")}"></div>
       </div>
+      <label for="edit-notification-days">Reminder (${defaultReminderDays} days before is the default value)</label>
+      <input id="edit-notification-days" name="notification_days_before" type="number" min="0" max="3650"
+             placeholder="${defaultReminderDays} days before (default value)"
+             value="${documentData.notification_days_before ?? ""}">
       <div class="attributes-heading"><h3>${isManual ? "Additional fields" : "Extracted attributes"}</h3><div class="attribute-add-actions"><button id="add-field" class="secondary compact" type="button">Add field</button><button id="add-group" class="secondary compact" type="button">Add group</button></div></div>
       <div class="attribute-column-labels" aria-hidden="true"><span>Field name</span><span>Value</span></div>
       <div id="attribute-fields"></div>
@@ -293,6 +306,38 @@ async function loadDocuments(parameters = new URLSearchParams()) {
   } catch (error) { showMessage(userMessage(error, "We couldn't load your documents. Please try again."), true); }
 }
 
+async function loadReminderSettings() {
+  const response = await apiFetch("/api/settings/reminders");
+  if (!response.ok) throw requestError(response, "We couldn't load reminder settings.");
+  const settings = await response.json();
+  defaultReminderDays = settings.default_notification_days_before;
+  document.querySelector("#default-reminder-days").value = defaultReminderDays;
+}
+
+document.querySelector("#reminder-settings-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const days = Number(new FormData(form).get("default_notification_days_before"));
+    const response = await apiFetch("/api/settings/reminders", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ default_notification_days_before: days }),
+    });
+    if (!response.ok) throw requestError(response, "We couldn't save the default reminder.");
+    const settings = await response.json();
+    defaultReminderDays = settings.default_notification_days_before;
+    showMessage(`Default reminder saved: ${defaultReminderDays} days before expiration.`);
+    await loadDocuments();
+  } catch (error) {
+    showMessage(userMessage(error, "We couldn't save the default reminder."), true);
+  } finally {
+    button.disabled = false;
+  }
+});
+
 async function loadPendingDocuments() {
   try {
     const response = await apiFetch("/api/pending-documents");
@@ -331,6 +376,7 @@ document.querySelector("#add-manual-document").addEventListener("click", () => s
     summary: "",
     issue_date: null,
     expiry_date: null,
+    notification_days_before: null,
     extracted_data: {},
   },
 }, "manual"));
@@ -480,7 +526,9 @@ async function monitorJob(jobId) {
   }
 }
 
-Promise.all([loadDocuments(), loadProcessingQueue(), loadPendingDocuments()]);
+loadReminderSettings()
+  .then(() => Promise.all([loadDocuments(), loadProcessingQueue(), loadPendingDocuments()]))
+  .catch((error) => showMessage(userMessage(error, "We couldn't load the dashboard."), true));
 window.setInterval(() => {
   loadProcessingQueue();
   loadPendingDocuments();

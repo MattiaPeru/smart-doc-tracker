@@ -45,6 +45,7 @@ Fields:
 - `rag_generator: TextGenerator | None = None`
 - `stdout: TextIO = field(default_factory=lambda: sys.stdout)`
 - `stderr: TextIO = field(default_factory=lambda: sys.stderr)`
+- `reminder_settings: LocalReminderSettingsStore | None = None`
 
 Methods:
 
@@ -121,8 +122,8 @@ Fields:
 
 Methods:
 
-- `check_expirations(self, days_threshold: int = 30) -> int` — Run one expiration check and print its summary.
-- `monitor_expirations(self, days_threshold: int = 30, *, check_time: time) -> int` — Schedule recurring local expiration checks in the foreground.
+- `check_expirations(self, days_threshold: int | None = None) -> int` — Run one expiration check and print its summary.
+- `monitor_expirations(self, days_threshold: int | None = None, *, check_time: time) -> int` — Schedule recurring local expiration checks in the foreground.
 
 ## `smart_doc_tracker.controllers.inbox_workflow_controller`
 
@@ -753,6 +754,7 @@ Fields:
 - `summary: str = Field(min_length=1, max_length=1000)`
 - `expiry_date: date | None`
 - `issue_date: date | None`
+- `notification_days_before: int | None = Field(default=None, ge=0, le=3650)`
 - `extracted_data: dict[str, Any]`
 
 Methods:
@@ -1100,7 +1102,7 @@ Fields:
 
 Methods:
 
-- `check(self, days_threshold: int = 30) -> ExpirationCheckResult` — Notify once for each document expiring inside the inclusive window.
+- `check(self, days_threshold: int = 30) -> ExpirationCheckResult` — Notify for each document using its override or the supplied default.
 
 ## `smart_doc_tracker.scheduler`
 
@@ -1126,6 +1128,34 @@ Methods:
 
 - `__init__(self, backend: BlockingSchedulerBackend | None = None) -> None` — Configure the local scheduler backend.
 - `run(self, task: Callable[[], None], *, check_time: time) -> None` — Register one daily task and block until the process is interrupted.
+
+## `smart_doc_tracker.settings`
+
+Source: [`src/smart_doc_tracker/settings.py`](../../src/smart_doc_tracker/settings.py)
+
+Durable local reminder settings for the application.
+
+### `ReminderSettings(BaseModel)`
+
+User-selected defaults for document expiration reminders.
+
+Fields:
+
+- `default_notification_days_before: int = Field(default=30, ge=0, le=3650)`
+
+### `ReminderSettingsError(RuntimeError)`
+
+Raised when local reminder settings cannot be read or persisted.
+
+### `LocalReminderSettingsStore`
+
+Read and atomically persist reminder settings on the local host.
+
+Methods:
+
+- `__init__(self, path: str | Path = Path('data/settings.json')) -> None` — Configure the local settings file without performing any I/O.
+- `load(self) -> ReminderSettings` — Return persisted settings or application defaults when absent.
+- `save(self, settings: ReminderSettings) -> ReminderSettings` — Atomically replace the local settings file with validated values.
 
 ## `smart_doc_tracker.web.app`
 
@@ -1155,6 +1185,7 @@ Fields:
 - `processed_path: Path = Path('data/processed')`
 - `repository_closer: Callable[[], None] | None = None`
 - `chat_memory: TemporaryChatMemory | None = None`
+- `reminder_settings: LocalReminderSettingsStore | None = None`
 
 - `default_web_dependencies() -> WebDependencies` — Compose the production dashboard from loopback-only adapters.
 
@@ -1378,6 +1409,8 @@ Fields:
 - `summary: str`
 - `expiry_date: date | None`
 - `issue_date: date | None`
+- `notification_days_before: int | None`
+- `effective_notification_days_before: int`
 - `extracted_data: dict[str, Any]`
 - `created_at: datetime`
 - `expiration_status: Literal['expired', 'soon', 'valid', 'none']`
@@ -1386,6 +1419,10 @@ Fields:
 Methods:
 
 - `from_record(cls, record: StoredDocument, *, today: date, alert_days: int) -> DocumentResponse` — Create a response and classify its expiration color.
+
+### `ReminderSettingsResponse(ReminderSettings)`
+
+Browser-visible reminder defaults stored only on the local host.
 
 ### `DocumentUpdateResponse(DocumentResponse)`
 

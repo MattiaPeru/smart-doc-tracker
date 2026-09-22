@@ -60,6 +60,12 @@ class CliArgumentParserTests(TestCase):
 
         self.assertTrue(arguments.show_rag_validation_details)
 
+    def test_parses_complete_pipeline_using_saved_reminder_default(self) -> None:
+        arguments = CliArgumentParser().parse(["--complete-pipeline"])
+
+        self.assertTrue(arguments.complete_pipeline)
+        self.assertIsNone(arguments.days_threshold)
+
 
 class JsonResultSerializerTests(TestCase):
     def test_serializes_insert_result_and_writes_one_json_value(self) -> None:

@@ -11,6 +11,7 @@ persistence:
   "summary": "A vehicle insurance policy",
   "expiry_date": "2030-12-31",
   "issue_date": "2025-01-01",
+  "notification_days_before": null,
   "extracted_data": {
     "policy_number": "P-123",
     "holder": {
@@ -32,6 +33,8 @@ vary by document type without creating a collection per type.
 - `summary` is required and limited to 1,000 characters.
 - Dates are optional and normalized from `YYYY-MM-DD`, `DD/MM/YYYY`, `DD-MM-YYYY`,
   or `YYYY/MM/DD`.
+- `notification_days_before` is either `null` to follow the current application
+  default or an integer from 0 through 3,650 for a document-specific override.
 - Empty, `none`, `null`, `n/a`, `unknown`, and `not_applicable` date strings become
   `null`.
 - Dynamic keys at every nesting level must use English `snake_case`.
@@ -52,6 +55,7 @@ vary by document type without creating a collection per type.
 | `summary` | string | Validated concise summary |
 | `expiry_date` | UTC datetime or null | Date stored at midnight UTC |
 | `issue_date` | UTC datetime or null | Date stored at midnight UTC |
+| `notification_days_before` | integer or null | Per-document reminder override |
 | `extracted_data` | object | Validated dynamic payload |
 
 Indexes:

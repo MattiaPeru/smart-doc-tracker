@@ -19,6 +19,7 @@ from ..interfaces.pdf_page_extractor import PDFPageExtractor
 from ..interfaces.scheduler import Scheduler
 from ..interfaces.structured_document_parser import StructuredDocumentParser
 from ..interfaces.text_generator import TextGenerator
+from ..settings import LocalReminderSettingsStore
 
 RepositoryFactory = Callable[[], DocumentRepository]
 DocumentFoldersFactory = Callable[[Path, Path], DocumentFolders]
@@ -40,6 +41,7 @@ class CliDependencies:
     rag_generator: TextGenerator | None = None
     stdout: TextIO = field(default_factory=lambda: sys.stdout)
     stderr: TextIO = field(default_factory=lambda: sys.stderr)
+    reminder_settings: LocalReminderSettingsStore | None = None
 
     @classmethod
     def with_overrides(cls, **overrides: object) -> CliDependencies:

@@ -84,6 +84,14 @@ class CliArgumentParser:
             help="Process all supported images currently in the local inbox.",
         )
         operation_group.add_argument(
+            "--complete-pipeline",
+            action="store_true",
+            help=(
+                "Process the inbox and check expirations using the saved reminder "
+                "default unless --days-threshold is supplied."
+            ),
+        )
+        operation_group.add_argument(
             "--ask-documents",
             metavar="QUESTION",
             help="Ask a grounded question across locally indexed documents.",
@@ -139,7 +147,7 @@ class CliArgumentParser:
             default=None,
             help=(
                 "Run the complete inbox and expiration pipeline using this inclusive "
-                "expiration window. Expiration-only modes default to 30 days."
+                "expiration window. When omitted, the dashboard default is used."
             ),
         )
         parser.add_argument(

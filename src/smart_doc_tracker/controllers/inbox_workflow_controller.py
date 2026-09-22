@@ -28,6 +28,7 @@ from ..pipeline import (
     InboxProcessingPipeline,
     InboxProcessingResult,
 )
+from ..settings import LocalReminderSettingsStore, ReminderSettingsError
 from .rag_workflow_controller import create_document_vector_index
 
 
@@ -149,7 +150,17 @@ class InboxWorkflowController:
     def run_complete_pipeline(self, args: argparse.Namespace) -> int:
         """Process the inbox and then check stored document expirations."""
         dependencies = self.dependencies
-        days_threshold = args.days_threshold if args.days_threshold is not None else 30
+        try:
+            days_threshold = (
+                args.days_threshold
+                if args.days_threshold is not None
+                else (
+                    dependencies.reminder_settings or LocalReminderSettingsStore()
+                ).load().default_notification_days_before
+            )
+        except ReminderSettingsError as exc:
+            print(f"Expiration check failed: {exc}", file=dependencies.stderr)
+            return 1
         try:
             generator = OllamaClient(base_url=args.ollama_url, model=args.model)
             parser = dependencies.document_parser or DocumentParser(generator)

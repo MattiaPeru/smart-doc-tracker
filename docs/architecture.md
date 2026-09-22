@@ -243,9 +243,10 @@ nearest Chroma fragments, and asks Ollama to produce a validated answer referenc
 only retrieved document IDs. Calendar-year expiration questions use normalized
 MongoDB dates directly and do not depend on semantic retrieval.
 
-Expiration checks query an inclusive range from today through the configured number
-of days. The notifier receives only a prepared document label and normalized expiry
-date; it does not receive OCR text or the dynamic payload.
+Expiration checks use the locally persisted default reminder for documents that
+inherit it and a validated per-document override where present. The notifier receives
+only a prepared document label and normalized expiry date; it does not receive OCR
+text or the dynamic payload.
 
 ### Document-question sequence
 

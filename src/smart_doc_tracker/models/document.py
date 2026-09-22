@@ -27,6 +27,7 @@ class DocumentData(BaseModel):
     summary: str = Field(min_length=1, max_length=1000)
     expiry_date: date | None
     issue_date: date | None
+    notification_days_before: int | None = Field(default=None, ge=0, le=3_650)
     extracted_data: dict[str, Any]
 
     @field_validator("document_type")
