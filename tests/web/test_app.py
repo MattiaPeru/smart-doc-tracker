@@ -471,6 +471,25 @@ class WebApplicationTests(TestCase):
         self.assertNotIn("JSON.stringify(value)", script.text)
         self.assertIn(".nested-value > summary", stylesheet.text)
 
+    def test_document_editor_can_add_groups_at_multiple_levels(self) -> None:
+        dashboard_script = self.client.get("/static/js/dashboard.js").text
+        editor_script = self.client.get("/static/js/attribute-editor.js").text
+        stylesheet = self.client.get("/static/dashboard.css").text
+
+        self.assertIn("addGroupRow", dashboard_script)
+        self.assertIn('id="add-group"', dashboard_script)
+        self.assertIn('addValueNode(container, key, {}, false)', editor_script)
+        self.assertIn('.nested-value").open = true', editor_script)
+        self.assertIn(
+            "addGroupButton.textContent = node.dataset.valueKind", editor_script
+        )
+        self.assertIn(
+            'addGroupButton.addEventListener("click", () => addChild({}))',
+            editor_script,
+        )
+        self.assertIn('addActions.className = "nested-add-actions"', editor_script)
+        self.assertIn(".nested-add-actions", stylesheet)
+
     def test_dashboard_shows_extracted_attributes_without_raw_json(self) -> None:
         script = self.dashboard_source()
 
@@ -687,7 +706,7 @@ class WebApplicationTests(TestCase):
 
         self.assertIn('id="add-manual-document"', dashboard.text)
         self.assertIn('"/api/documents/manual"', script.text)
-        self.assertIn('"Title"', script.text)
+        self.assertIn("Document title", script.text)
         self.assertIn('"Additional fields"', script.text)
 
     def test_updates_and_deletes_a_document_in_both_stores(self) -> None:

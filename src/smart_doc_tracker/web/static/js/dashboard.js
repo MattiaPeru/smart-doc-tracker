@@ -1,4 +1,4 @@
-import { addFieldRow, editorPayload } from "./attribute-editor.js";
+import { addFieldRow, addGroupRow, editorPayload } from "./attribute-editor.js";
 import { renderAttributeView } from "./attribute-view.js";
 import { requestError, userMessage, UserFacingError } from "./errors.js";
 import { clearMessage, showMessage } from "./messages.js";
@@ -192,7 +192,7 @@ function showEditor(item, mode) {
         <div><label for="edit-issue-date">Issue date</label><input id="edit-issue-date" name="issue_date" type="date" value="${escapeHtml(documentData.issue_date || "")}"></div>
         <div><label for="edit-expiry-date">Expiry date</label><input id="edit-expiry-date" name="expiry_date" type="date" value="${escapeHtml(documentData.expiry_date || "")}"></div>
       </div>
-      <div class="attributes-heading"><h3>${isManual ? "Additional fields" : "Extracted attributes"}</h3><button id="add-field" class="secondary compact" type="button">Add field</button></div>
+      <div class="attributes-heading"><h3>${isManual ? "Additional fields" : "Extracted attributes"}</h3><div class="attribute-add-actions"><button id="add-field" class="secondary compact" type="button">Add field</button><button id="add-group" class="secondary compact" type="button">Add group</button></div></div>
       <div class="attribute-column-labels" aria-hidden="true"><span>Field name</span><span>Value</span></div>
       <div id="attribute-fields"></div>
       <div id="editor-message" class="editor-message" role="alert" hidden></div>
@@ -202,6 +202,7 @@ function showEditor(item, mode) {
   const fields = detail.querySelector("#attribute-fields");
   Object.entries(documentData.extracted_data).forEach(([key, value]) => addFieldRow(fields, key, value));
   detail.querySelector("#add-field").addEventListener("click", () => addFieldRow(fields));
+  detail.querySelector("#add-group").addEventListener("click", () => addGroupRow(fields));
   detail.querySelector("#document-editor").addEventListener("submit", (event) => saveEditor(event, item.id, mode));
   if (isPending) detail.querySelector("#reject-pending").addEventListener("click", () => rejectPending(item.id));
   reviewDialog.showModal();

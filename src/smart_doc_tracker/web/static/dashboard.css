@@ -215,6 +215,7 @@ pre { overflow: auto; border-radius: 8px; padding: 14px; background: #f1f2ef; wh
 .date-fields > div { display: grid; gap: 9px; }
 .attributes-heading { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; }
 .attributes-heading h3 { margin: 0; }
+.attribute-add-actions, .nested-add-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .attribute-column-labels { display: grid; grid-template-columns: minmax(150px, .8fr) minmax(220px, 1.4fr) 42px; gap: 8px; margin: 14px 0 6px; padding: 0 10px; color: var(--muted); font-size: .76rem; font-weight: 750; letter-spacing: .04em; text-transform: uppercase; }
 .attribute-row { display: grid; grid-template-columns: minmax(120px, .8fr) minmax(180px, 1.4fr) auto; gap: 8px; margin-bottom: 8px; }
 .attribute-value-cell { min-width: 0; }
@@ -254,7 +255,8 @@ pre { overflow: auto; border-radius: 8px; padding: 14px; background: #f1f2ef; wh
 .nested-value[open] > summary { border-bottom: 1px solid var(--line); }
 .nested-fields { min-width: 520px; padding: 0 10px; }
 .nested-column-labels { grid-template-columns: minmax(110px, .8fr) minmax(160px, 1.4fr) 42px; margin-top: 10px; padding-inline: 20px; }
-.add-nested-field { margin: 2px 10px 10px; }
+.nested-value > .add-nested-field { margin: 2px 10px 10px; }
+.nested-add-actions { margin: 2px 10px 10px; }
 .attribute-node .attribute-node { padding-left: 8px; border-left: 2px solid #dcece2; }
 .remove-field { font-size: 1.2rem; }
 

@@ -11,6 +11,11 @@ export function addFieldRow(container, key = "", value = "") {
   addValueNode(container, key, value, false);
 }
 
+export function addGroupRow(container, key = "") {
+  const node = addValueNode(container, key, {}, false);
+  node.querySelector(":scope > .attribute-row .nested-value").open = true;
+}
+
 
 function createKeyControl(key, isArrayItem) {
   if (isArrayItem) {
@@ -245,11 +250,13 @@ function addValueNode(container, key, value, isArrayItem) {
       addValueNode(nested, childKey, childValue, fixedItemLabel);
     }
 
+    const addActions = document.createElement("div");
+    addActions.className = "nested-add-actions";
     const addButton = document.createElement("button");
     addButton.className = "secondary compact add-nested-field";
     addButton.type = "button";
     addButton.textContent = isArrayKind(node.dataset.valueKind) ? "Add item" : "Add field";
-    addButton.addEventListener("click", () => {
+    const addChild = (childValue) => {
       const count = directFieldNodes(nested).length + 1;
       let childKey = "";
       let fixedItemLabel = false;
@@ -260,11 +267,25 @@ function addValueNode(container, key, value, isArrayItem) {
         childKey = `${fieldLabel(node.dataset.itemField)} ${count}`;
         fixedItemLabel = true;
       }
-      addValueNode(nested, childKey, "", fixedItemLabel);
+      const childNode = addValueNode(nested, childKey, childValue, fixedItemLabel);
+      if (containerKind(childValue) === "object") {
+        childNode.querySelector(":scope > .attribute-row .nested-value").open = true;
+      }
       details.open = true;
       updateContainerSummary(node);
-    });
-    details.append(summary, labels, nested, addButton);
+    };
+    addButton.addEventListener("click", () => addChild(""));
+    addActions.append(addButton);
+
+    if (node.dataset.valueKind === "object" || node.dataset.valueKind === "array") {
+      const addGroupButton = document.createElement("button");
+      addGroupButton.className = "secondary compact add-nested-group";
+      addGroupButton.type = "button";
+      addGroupButton.textContent = node.dataset.valueKind === "array" ? "Add group item" : "Add group";
+      addGroupButton.addEventListener("click", () => addChild({}));
+      addActions.append(addGroupButton);
+    }
+    details.append(summary, labels, nested, addActions);
     valueCell.append(details);
   }
   row.append(valueCell);
@@ -288,6 +309,7 @@ function addValueNode(container, key, value, isArrayItem) {
   if (node.dataset.valueKind !== "scalar" && node.dataset.valueKind !== "scalar-array") {
     updateContainerSummary(node);
   }
+  return node;
 }
 
 function directFieldNodes(container) {
@@ -393,4 +415,3 @@ export function editorPayload(form) {
     extracted_data: extractedData,
   };
 }
-
