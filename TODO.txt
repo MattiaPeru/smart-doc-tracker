@@ -1,3 +1,1 @@
-- Add the chat to the web site.   OK
-- Sobsitute the ocr with an llm.
-- Look if the context of the chat is used while chatting.
+- Substitute the ocr with an llm.
