@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..db.database import StoredDocument
 from ..models.document import DocumentData
-from ..models.rag import IndexedDocumentFragment
+from ..models.rag import AnswerClaim, IndexedDocumentFragment
 from .index_jobs import IndexUpdateJob
 from .jobs import UploadJob
 from .pending import PendingDocument
@@ -54,7 +54,9 @@ class ChatResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     answer: str
+    claims: list[AnswerClaim]
     documents: list[ChatDocumentReference]
+    insufficient_information: bool
 
 
 class DocumentResponse(BaseModel):

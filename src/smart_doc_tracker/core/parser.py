@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date
 
@@ -92,13 +92,39 @@ and object. Omit a fact if it cannot be extracted. Do not emit placeholder
 strings containing only opening JSON delimiters. Return one complete JSON object."""
 
 
+@dataclass(frozen=True, slots=True)
+class GeneratedResponseDiagnostic:
+    """One rejected local-model response and its private validation reason."""
+
+    response: str
+    reason: str
+
+
 class DocumentParsingError(ValueError):
     """Raised when generated output cannot become a valid document model."""
 
-    def __init__(self, message: str, *, generated_response: str | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        generated_response: str | None = None,
+        validation_reason: str | None = None,
+        validation_diagnostics: Sequence[GeneratedResponseDiagnostic] = (),
+    ) -> None:
         """Create a sanitized parsing error with optional private source output."""
         super().__init__(message)
-        self.generated_response = generated_response
+        self.validation_diagnostics = tuple(validation_diagnostics)
+        latest = (
+            self.validation_diagnostics[-1] if self.validation_diagnostics else None
+        )
+        latest_response = latest.response if latest is not None else None
+        latest_reason = latest.reason if latest is not None else None
+        self.generated_response = (
+            generated_response if generated_response is not None else latest_response
+        )
+        self.validation_reason = (
+            validation_reason if validation_reason is not None else latest_reason
+        )
 
 
 class DocumentParser:

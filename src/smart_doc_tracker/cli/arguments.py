@@ -89,6 +89,14 @@ class CliArgumentParser:
             help="Ask a grounded question across locally indexed documents.",
         )
         parser.add_argument(
+            "--show-rag-validation-details",
+            action="store_true",
+            help=(
+                "Print a rejected local model response and its validation reason. "
+                "This can expose sensitive document contents in the terminal."
+            ),
+        )
+        parser.add_argument(
             "--document-type",
             help="Replacement document type for --update-stored.",
         )

@@ -338,7 +338,7 @@ document.querySelector("#refresh-button").addEventListener("click", () => Promis
 document.querySelector("#close-dialog").addEventListener("click", () => dialog.close());
 document.querySelector("#close-review-dialog").addEventListener("click", () => reviewDialog.close());
 
-function appendChatMessage(role, message, documents = []) {
+function appendChatMessage(role, message, documents = [], insufficientInformation = false) {
   const messages = document.querySelector("#chat-messages");
   const article = document.createElement("article");
   article.className = `chat-message ${role === "user" ? "user-message" : "bot-message"}`;
@@ -348,12 +348,15 @@ function appendChatMessage(role, message, documents = []) {
   const content = document.createElement("p");
   content.textContent = message;
   article.append(speaker, content);
+  if (insufficientInformation) {
+    const notice = document.createElement("strong");
+    notice.className = "chat-insufficient";
+    notice.textContent = "Insufficient information in the retrieved documents.";
+    article.append(notice);
+  }
   if (documents.length) {
     const sources = document.createElement("div");
     sources.className = "chat-sources";
-    const label = document.createElement("strong");
-    label.textContent = "Supporting documents";
-    sources.append(label);
     documents.forEach((sourceDocument) => {
       const button = window.document.createElement("button");
       button.type = "button";
@@ -404,7 +407,12 @@ document.querySelector("#chat-form").addEventListener("submit", async (event) =>
     }
     const payload = await response.json();
     pending.remove();
-    appendChatMessage("assistant", payload.answer, payload.documents);
+    appendChatMessage(
+      "assistant",
+      payload.answer,
+      payload.documents,
+      payload.insufficient_information,
+    );
   } catch (error) {
     pending.remove();
     appendChatMessage("assistant", userMessage(error, "The local document assistant couldn't answer right now."));

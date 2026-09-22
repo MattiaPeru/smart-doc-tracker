@@ -122,6 +122,16 @@ Use `--rag-results N` to control the maximum number of retrieved fragments. Answ
 contain the document IDs used as sources. The answer is generated locally and can be
 incomplete or inaccurate; inspect the referenced records before acting on it.
 
+When a generated answer is rejected, use the following option on a private terminal
+to print the rejected local-model response and the exact validation reason:
+
+```powershell
+smart-doc-tracker --ask-documents "Which skills are in my CV?" --show-rag-validation-details
+```
+
+The diagnostic output can contain sensitive excerpts from indexed documents. It is
+not printed unless the option is explicitly supplied.
+
 Questions about expirations in a specific or current year use normalized MongoDB
 dates when recognized, providing deterministic results.
 
@@ -150,6 +160,10 @@ For Windows Scheduled Task installation, see [Operations](operations.md).
 `--print-ocr-text` prints the exact extracted content to standard error. Use it only
 on a private terminal and clear any captured output according to your data policy.
 It is not required for normal operation.
+
+`--show-rag-validation-details` similarly prints a rejected local model response and
+its validation reason to standard error. Do not use it in shared terminals, CI,
+scheduled tasks, screenshots, or support logs.
 
 Exit status `0` means the requested workflow completed, `1` means an operational or
 processing failure, and `2` means invalid command input. `argparse` can also terminate

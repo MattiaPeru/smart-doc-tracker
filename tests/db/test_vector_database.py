@@ -135,6 +135,33 @@ class ChromaDocumentVectorIndexTests(TestCase):
 
         self.assertEqual(collection.delete_calls, [["doc-1:raw:9999"]])
 
+    def test_indexes_reliable_pdf_page_metadata_without_cross_page_chunks(self) -> None:
+        collection = FakeCollection()
+        index = ChromaDocumentVectorIndex(
+            embedding_generator=FakeEmbeddingGenerator(),
+            client_factory=lambda _host, _port: FakeClient(collection),
+            chunk_characters=100,
+            chunk_overlap=10,
+        )
+
+        index.upsert_document(
+            "doc-1",
+            raw_text="[Page 1]\nFirst page text\n\n[Page 2]\nSecond page text",
+            document=_document(),
+        )
+
+        documents = collection.upsert_payload["documents"]
+        metadatas = collection.upsert_payload["metadatas"]
+        assert isinstance(documents, list)
+        assert isinstance(metadatas, list)
+        raw_pairs = [
+            (content, metadata)
+            for content, metadata in zip(documents, metadatas, strict=True)
+            if metadata["source"] == "raw_text"
+        ]
+        self.assertEqual([metadata["page"] for _, metadata in raw_pairs], [1, 2])
+        self.assertNotIn("Second page text", raw_pairs[0][0])
+
     def test_queries_with_precomputed_embedding_and_decodes_metadata(self) -> None:
         collection = FakeCollection()
         embedder = FakeEmbeddingGenerator()

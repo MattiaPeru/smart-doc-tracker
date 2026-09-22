@@ -64,7 +64,9 @@ from ..pipeline import (
     DocumentProcessingResult,
     DocumentQuestionPipeline,
     ExpirationYearQuestionPipeline,
+    StructuredFieldQuestionPipeline,
     requested_expiry_year,
+    requested_structured_field,
 )
 from .chat_memory import TemporaryChatMemory
 from .index_jobs import DocumentIndexJobService
@@ -360,6 +362,7 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
             question,
             today=resolved.today_provider(),
         )
+        structured_field = requested_structured_field(question)
         try:
             if expiry_year is not None:
                 _LOGGER.info("Chat request is using the normalized expiry-date query.")
@@ -367,6 +370,17 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
                     repository,
                     today_provider=resolved.today_provider,
                 ).ask(expiry_year)
+            elif structured_field is not None:
+                _LOGGER.info("Chat request is using a validated structured field.")
+                if resolved.vector_index is None:
+                    raise HTTPException(
+                        status_code=503,
+                        detail="The local document assistant is unavailable.",
+                    )
+                answer = StructuredFieldQuestionPipeline(
+                    repository,
+                    resolved.vector_index,
+                ).ask(question, structured_field, history=history)
             else:
                 _LOGGER.info("Chat request is using semantic retrieval and Ollama.")
                 if resolved.vector_index is None or resolved.rag_generator is None:
@@ -386,9 +400,8 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
             VectorDatabaseError,
         ) as exc:
             _LOGGER.error(
-                "Chat request failed with %s: %s",
+                "Chat request failed with %s.",
                 type(exc).__name__,
-                str(exc),
             )
             raise HTTPException(
                 status_code=503,
@@ -413,7 +426,12 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
                     document_ids=tuple(answer.document_ids),
                 ),
             )
-        return ChatResponse(answer=answer.answer, documents=documents)
+        return ChatResponse(
+            answer=answer.answer,
+            claims=answer.claims,
+            documents=documents,
+            insufficient_information=answer.insufficient_information,
+        )
 
     @app.delete("/api/chat/conversations/{conversation_id}", status_code=204)
     def clear_chat_conversation(conversation_id: str) -> Response:

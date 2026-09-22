@@ -52,6 +52,9 @@ The CLI emits stable JSON results on standard output and progress or errors on
 standard error. It should not log filenames, raw text, or extracted fields during
 inbox automation. `--print-ocr-text` is an explicit diagnostic escape hatch and must
 not be used in scheduled tasks, shared terminals, CI, screenshots, or support logs.
+`--show-rag-validation-details` is another explicit escape hatch that can print a
+rejected local-model response and its validation reason to standard error; it has
+the same restrictions.
 
 Desktop expiration alerts contain only normalized document type and expiration date.
 The dashboard displays document details only to the same-host browser and does not
@@ -59,6 +62,8 @@ claim to provide authentication between local users.
 
 Exceptions exposed to users must describe the failing boundary without embedding a
 model response, OCR content, question context, or database payload.
+Sensitive model output may be rendered separately only when the user explicitly
+requests RAG validation diagnostics.
 
 ## Files and temporary data
 

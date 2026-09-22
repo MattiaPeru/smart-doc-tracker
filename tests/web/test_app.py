@@ -195,8 +195,12 @@ class FakeGenerator:
     def generate(self, *, system_prompt: str, user_prompt: str) -> str:
         self.questions.append(user_prompt)
         return (
-            '{"answer":"The policy expires on 2026-08-25.",'
-            '"document_ids":["expired"]}'
+            '{"answer":"The policy indicates a local insurance record.",'
+            '"claims":[{"claim":"The record is a local insurance policy",'
+            '"evidence":[{"document_id":"expired",'
+            '"quote":"The policy expires on 2026-08-25.",'
+            '"source":"structured_document","page":null}]}],'
+            '"document_ids":["expired"],"insufficient_information":false}'
         )
 
 
@@ -299,14 +303,27 @@ class WebApplicationTests(TestCase):
         with self.assertLogs("smart_doc_tracker.pipeline", level="INFO") as captured:
             response = self.client.post(
                 "/api/chat",
-                json={"question": "When does my insurance policy expire?"},
+                json={"question": "What does my insurance policy indicate?"},
             )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.json(),
             {
-                "answer": "The policy expires on 2026-08-25.",
+                "answer": "The policy indicates a local insurance record.",
+                "claims": [
+                    {
+                        "claim": "The record is a local insurance policy",
+                        "evidence": [
+                            {
+                                "document_id": "expired",
+                                "quote": "The policy expires on 2026-08-25.",
+                                "source": "structured_document",
+                                "page": None,
+                            }
+                        ],
+                    }
+                ],
                 "documents": [
                     {
                         "id": "expired",
@@ -314,13 +331,14 @@ class WebApplicationTests(TestCase):
                         "summary": "A local insurance policy",
                     }
                 ],
+                "insufficient_information": False,
             },
         )
-        self.assertIn("Retrieved context", self.generator.questions[0])
+        self.assertIn("Retrieved evidence passages", self.generator.questions[0])
         log_output = "\n".join(captured.output)
         self.assertIn("retrieval completed (1 fragments)", log_output)
         self.assertIn("local generation started", log_output)
-        self.assertNotIn("insurance policy expire", log_output)
+        self.assertNotIn("insurance policy indicate", log_output)
 
     def test_chat_remembers_only_questions_from_the_same_temporary_conversation(
         self,
@@ -351,13 +369,10 @@ class WebApplicationTests(TestCase):
         self.assertEqual(second.status_code, 200)
         self.assertEqual(separate.status_code, 200)
         previous_question = "When does my insurance policy expire?"
-        self.assertIn(previous_question, self.vector_index.queries[1])
-        self.assertNotIn(previous_question, self.vector_index.queries[2])
-        self.assertIn(
-            '"question": "When does my insurance policy expire?"',
-            self.generator.questions[1],
-        )
-        self.assertIn("Conversation history:\n[]", self.generator.questions[2])
+        self.assertEqual(second.json()["answer"], "The issue date is 2026-01-01.")
+        self.assertNotIn(previous_question, self.vector_index.queries[-1])
+        self.assertEqual(self.vector_index.queries[-1], "And who owns it?")
+        self.assertEqual(self.generator.questions, [])
 
     def test_new_conversation_endpoint_forgets_temporary_history(self) -> None:
         payload = {
@@ -379,7 +394,8 @@ class WebApplicationTests(TestCase):
 
         self.assertEqual(cleared.status_code, 204)
         self.assertEqual(follow_up.status_code, 200)
-        self.assertIn("Conversation history:\n[]", self.generator.questions[-1])
+        self.assertEqual(self.vector_index.queries[-1], "And when was it issued?")
+        self.assertEqual(self.generator.questions, [])
 
     def test_reports_chat_failure_cause_without_logging_the_question(self) -> None:
         unavailable_app = create_app(
@@ -443,6 +459,15 @@ class WebApplicationTests(TestCase):
         self.assertIn('id="new-chat-button"', dashboard.text)
         self.assertIn("conversation_id: conversationId", script.text)
         self.assertIn("crypto.randomUUID()", script.text)
+        chat_renderer = script.text.split("function appendChatMessage", 1)[1].split(
+            "async function openChatDocument", 1
+        )[0]
+        self.assertNotIn("innerHTML", chat_renderer)
+        self.assertNotIn("payload.claims", script.text)
+        self.assertNotIn("claim.evidence.forEach", chat_renderer)
+        self.assertNotIn("chat-evidence", chat_renderer)
+        self.assertNotIn("Supporting documents", chat_renderer)
+        self.assertIn("documents.forEach((sourceDocument)", chat_renderer)
 
     def test_dashboard_omits_json_attribute_query_controls(self) -> None:
         dashboard = self.client.get("/")

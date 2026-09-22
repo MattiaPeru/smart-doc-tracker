@@ -49,6 +49,17 @@ class CliArgumentParserTests(TestCase):
         self.assertEqual(arguments.expiry_date, "null")
         self.assertEqual(arguments.extracted_data_json, '{"reference":"A-42"}')
 
+    def test_parses_explicit_rag_validation_diagnostics(self) -> None:
+        arguments = CliArgumentParser().parse(
+            [
+                "--ask-documents",
+                "Which skills are in my CV?",
+                "--show-rag-validation-details",
+            ]
+        )
+
+        self.assertTrue(arguments.show_rag_validation_details)
+
 
 class JsonResultSerializerTests(TestCase):
     def test_serializes_insert_result_and_writes_one_json_value(self) -> None:

@@ -98,6 +98,13 @@ Ask a grounded question:
 smart-doc-tracker --ask-documents "Which policies expire this year?"
 ```
 
+To diagnose a rejected generated answer on a private terminal, explicitly print the
+local model response and validation reason:
+
+```powershell
+smart-doc-tracker --ask-documents "Which skills are in my CV?" --show-rag-validation-details
+```
+
 Use `python -m smart_doc_tracker` if the console command is unavailable. Run
 `smart-doc-tracker --help` for the complete CLI reference.
 

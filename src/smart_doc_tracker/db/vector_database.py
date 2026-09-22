@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from hashlib import sha256
 from importlib import import_module
@@ -14,6 +15,7 @@ from ..models.document import DocumentData
 from ..models.rag import IndexedDocumentFragment, RetrievedDocumentChunk
 
 _COLLECTION_PREFIX = "smart_doc_tracker_documents"
+_PAGE_HEADER = re.compile(r"(?m)^\[Page (?P<page>[1-9]\d*)\]\r?\n")
 
 
 class VectorDatabaseError(RuntimeError):
@@ -82,16 +84,17 @@ class ChromaDocumentVectorIndex:
             raise ValueError("document_id cannot be empty")
         fragments = self._fragments(raw_text, document)
         embeddings = self._embedding_generator.embed(
-            [content for _, content, _ in fragments]
+            [content for _, content, _, _ in fragments]
         )
         if len(embeddings) != len(fragments):
             raise VectorDatabaseError(
                 "The local embedding model returned an unexpected result count."
             )
-        ids = [f"{document_id}:{suffix}" for suffix, _, _ in fragments]
-        documents = [content for _, content, _ in fragments]
+        ids = [f"{document_id}:{suffix}" for suffix, _, _, _ in fragments]
+        documents = [content for _, content, _, _ in fragments]
         metadatas = [
-            {"document_id": document_id, "source": source} for _, _, source in fragments
+            _fragment_metadata(document_id, source, page)
+            for _, _, source, page in fragments
         ]
         try:
             existing = self._collection.get(
@@ -161,7 +164,7 @@ class ChromaDocumentVectorIndex:
         if not document_id.strip():
             raise ValueError("document_id cannot be empty")
         fragments = self._fragments("", document)[:2]
-        contents = [content for _, content, _source in fragments]
+        contents = [content for _, content, _source, _page in fragments]
         embeddings = self._embedding_generator.embed(contents)
         if len(embeddings) != len(fragments):
             raise VectorDatabaseError(
@@ -169,12 +172,12 @@ class ChromaDocumentVectorIndex:
             )
         try:
             self._collection.upsert(
-                ids=[f"{document_id}:{suffix}" for suffix, _, _ in fragments],
+                ids=[f"{document_id}:{suffix}" for suffix, _, _, _ in fragments],
                 embeddings=embeddings,
                 documents=contents,
                 metadatas=[
-                    {"document_id": document_id, "source": source}
-                    for _, _, source in fragments
+                    _fragment_metadata(document_id, source, page)
+                    for _, _, source, page in fragments
                 ],
             )
         except Exception as exc:
@@ -239,10 +242,10 @@ class ChromaDocumentVectorIndex:
 
     def _fragments(
         self, raw_text: str, document: DocumentData
-    ) -> list[tuple[str, str, str]]:
+    ) -> list[tuple[str, str, str, int | None]]:
         """Build deterministic fragments for every requested content category."""
-        fragments = [
-            ("summary", document.summary, "summary"),
+        fragments: list[tuple[str, str, str, int | None]] = [
+            ("summary", document.summary, "summary", None),
             (
                 "structured",
                 json.dumps(
@@ -251,14 +254,32 @@ class ChromaDocumentVectorIndex:
                     sort_keys=True,
                 ),
                 "structured_data",
+                None,
             ),
         ]
-        for index, chunk in enumerate(
-            _chunk_text(raw_text, self._chunk_characters, self._chunk_overlap),
-            start=1,
-        ):
-            fragments.append((f"raw:{index:04d}", chunk, "raw_text"))
+        raw_chunks = _page_aware_chunks(
+            raw_text,
+            self._chunk_characters,
+            self._chunk_overlap,
+        )
+        for index, (chunk, page) in enumerate(raw_chunks, start=1):
+            fragments.append((f"raw:{index:04d}", chunk, "raw_text", page))
         return fragments
+
+
+def _fragment_metadata(
+    document_id: str,
+    source: str,
+    page: int | None,
+) -> dict[str, str | int]:
+    """Build Chroma metadata without claiming an unknown page number."""
+    metadata: dict[str, str | int] = {
+        "document_id": document_id,
+        "source": source,
+    }
+    if page is not None:
+        metadata["page"] = page
+    return metadata
 
 
 def collection_name_for_embedding_model(model: str) -> str:
@@ -335,6 +356,26 @@ def _chunk_text(text: str, size: int, overlap: int) -> list[str]:
     return chunks
 
 
+def _page_aware_chunks(
+    text: str,
+    size: int,
+    overlap: int,
+) -> list[tuple[str, int | None]]:
+    """Chunk OCR text without allowing one fragment to cross known PDF pages."""
+    matches = list(_PAGE_HEADER.finditer(text))
+    if not matches:
+        return [(chunk, None) for chunk in _chunk_text(text, size, overlap)]
+    chunks: list[tuple[str, int | None]] = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        page_text = text[match.start() : end]
+        page = int(match.group("page"))
+        chunks.extend(
+            (chunk, page) for chunk in _chunk_text(page_text, size, overlap)
+        )
+    return chunks
+
+
 def _decode_query_result(result: Any) -> list[RetrievedDocumentChunk]:
     """Validate the first Chroma result batch without exposing stored contents."""
     try:
@@ -359,8 +400,19 @@ def _decode_query_result(result: Any) -> list[RetrievedDocumentChunk]:
             raise VectorDatabaseError(
                 "The local vector database returned invalid query results."
             )
+        page = metadata.get("page")
+        if page is not None and (not isinstance(page, int) or page <= 0):
+            raise VectorDatabaseError(
+                "The local vector database returned invalid query results."
+            )
         chunks.append(
-            RetrievedDocumentChunk(document_id, content, source, float(distance))
+            RetrievedDocumentChunk(
+                document_id,
+                content,
+                source,
+                float(distance),
+                page,
+            )
         )
     return chunks
 
@@ -393,8 +445,13 @@ def _decode_document_fragments(result: Any) -> list[IndexedDocumentFragment]:
             raise VectorDatabaseError(
                 "The local vector database returned invalid document content."
             )
+        page = metadata.get("page")
+        if page is not None and (not isinstance(page, int) or page <= 0):
+            raise VectorDatabaseError(
+                "The local vector database returned invalid document content."
+            )
         fragments.append(
-            IndexedDocumentFragment(fragment_id, content, metadata["source"])
+            IndexedDocumentFragment(fragment_id, content, metadata["source"], page)
         )
     return sorted(fragments, key=lambda fragment: fragment.fragment_id)
 

@@ -228,13 +228,22 @@ Source: [`src/smart_doc_tracker/core/parser.py`](../../src/smart_doc_tracker/cor
 
 Convert raw OCR text into validated structured document data.
 
+### `GeneratedResponseDiagnostic`
+
+One rejected local-model response and its private validation reason.
+
+Fields:
+
+- `response: str`
+- `reason: str`
+
 ### `DocumentParsingError(ValueError)`
 
 Raised when generated output cannot become a valid document model.
 
 Methods:
 
-- `__init__(self, message: str, *, generated_response: str | None = None) -> None` — Create a sanitized parsing error with optional private source output.
+- `__init__(self, message: str, *, generated_response: str | None = None, validation_reason: str | None = None, validation_diagnostics: Sequence[GeneratedResponseDiagnostic] = ()) -> None` — Create a sanitized parsing error with optional private source output.
 
 ### `DocumentParser`
 
@@ -789,6 +798,7 @@ Fields:
 - `content: str`
 - `source: str`
 - `distance: float`
+- `page: int | None = None`
 
 ### `IndexedDocumentFragment`
 
@@ -799,6 +809,7 @@ Fields:
 - `fragment_id: str`
 - `content: str`
 - `source: str`
+- `page: int | None = None`
 
 ### `ConversationTurn`
 
@@ -810,6 +821,34 @@ Fields:
 - `answer: str`
 - `document_ids: tuple[str, ...]`
 
+### `AnswerEvidence(BaseModel)`
+
+One short verbatim quote supporting a concrete answer claim.
+
+Fields:
+
+- `document_id: str = Field(min_length=1, max_length=200)`
+- `quote: str = Field(min_length=1, max_length=500)`
+- `source: str = Field(min_length=1, max_length=100)`
+- `page: int | None = Field(default=None, ge=1)`
+
+Methods:
+
+- `decode_quote_entities(cls, value: object) -> object` — Decode text entities before literal evidence validation and display.
+
+### `AnswerClaim(BaseModel)`
+
+One concrete conclusion with bounded supporting evidence.
+
+Fields:
+
+- `claim: str = Field(min_length=1, max_length=1000)`
+- `evidence: list[AnswerEvidence] = Field(min_length=1, max_length=5)`
+
+Methods:
+
+- `decode_claim_entities(cls, value: object) -> object` — Decode harmless text entities for safe text-only rendering.
+
 ### `DocumentAnswer(BaseModel)`
 
 Grounded answer produced from retrieved local document fragments.
@@ -817,7 +856,13 @@ Grounded answer produced from retrieved local document fragments.
 Fields:
 
 - `answer: str = Field(min_length=1, max_length=8000)`
+- `claims: list[AnswerClaim] = Field(default_factory=list, max_length=10)`
 - `document_ids: list[str] = Field(default_factory=list, max_length=50)`
+- `insufficient_information: bool = False`
+
+Methods:
+
+- `decode_answer_entities(cls, value: object) -> object` — Decode text entities while leaving browser escaping to textContent.
 
 ## `smart_doc_tracker.mutation_pipeline`
 
@@ -995,6 +1040,29 @@ Fields:
 Methods:
 
 - `ask(self, question: str, *, limit: int = 5, history: Sequence[ConversationTurn] = ()) -> DocumentAnswer` — Answer a natural-language question using only retrieved local context.
+
+### `StructuredFieldRequest`
+
+One deterministic request for a validated structured document field.
+
+Fields:
+
+- `field_name: str`
+
+- `requested_structured_field(question: str) -> StructuredFieldRequest | None` — Recognize a factual question whose answer is stored as validated data.
+
+### `StructuredFieldQuestionPipeline`
+
+Answer factual field questions without allowing model-authored values.
+
+Fields:
+
+- `repository: DocumentRepository`
+- `vector_index: DocumentVectorIndex`
+
+Methods:
+
+- `ask(self, question: str, request: StructuredFieldRequest, *, limit: int = 5, history: Sequence[ConversationTurn] = ()) -> DocumentAnswer` — Read one validated repository value for the locally identified document.
 
 - `requested_expiry_year(question: str, *, today: date | None = None) -> int | None` — Return one unambiguous year from an expiry-related question.
 
@@ -1295,7 +1363,9 @@ Grounded answer and the locally stored documents that support it.
 Fields:
 
 - `answer: str`
+- `claims: list[AnswerClaim]`
 - `documents: list[ChatDocumentReference]`
+- `insufficient_information: bool`
 
 ### `DocumentResponse(BaseModel)`
 
