@@ -118,7 +118,7 @@ function showDetail(item, loadContent = false) {
       <dt>Issue date</dt><dd>${escapeHtml(item.issue_date || "Not available")}</dd>
       <dt>Expiry date</dt><dd>${escapeHtml(item.expiry_date || "Not available")}</dd>
     </dl>
-    <h3>Extracted attributes</h3>
+    <h3>Other attributes</h3>
     <div class="attribute-column-labels attribute-view-labels" aria-hidden="true"><span>Field name</span><span>Value</span></div>
     <div id="extracted-attributes" class="attribute-view"></div>
     ${item.original_file_name ? `<section class="original-document-section">

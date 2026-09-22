@@ -122,6 +122,6 @@ function addAttributeViewNode(container, key, value) {
 
 export function renderAttributeView(container, data) {
   Object.entries(data).forEach(([key, value]) => addAttributeViewNode(container, key, value));
-  if (!container.children.length) container.textContent = "No extracted attributes.";
+  if (!container.children.length) container.textContent = "No attributes available.";
 }
 
