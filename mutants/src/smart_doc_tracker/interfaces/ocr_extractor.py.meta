@@ -1,0 +1,15 @@
+{
+    "exit_code_by_key": {
+        "smart_doc_tracker.interfaces.ocr_extractor.x\u01c1OCRExtractor\u01c1extract_text__mutmut_1": 33,
+        "smart_doc_tracker.interfaces.ocr_extractor.x\u01c1OCRExtractor\u01c1extract_text__mutmut_2": 33
+    },
+    "hash_by_function_name": {
+        "x\u01c1OCRExtractor\u01c1extract_text": "460e4a79bf88"
+    },
+    "type_check_error_by_key": {},
+    "durations_by_key": {},
+    "estimated_durations_by_key": {
+        "smart_doc_tracker.interfaces.ocr_extractor.x\u01c1OCRExtractor\u01c1extract_text__mutmut_1": 0,
+        "smart_doc_tracker.interfaces.ocr_extractor.x\u01c1OCRExtractor\u01c1extract_text__mutmut_2": 0
+    }
+}

@@ -1,0 +1,36 @@
+{
+    "exit_code_by_key": {
+        "smart_doc_tracker.web._background_worker.x\u01c1BackgroundWorker\u01c1__init____mutmut_1": null,
+        "smart_doc_tracker.web._background_worker.x\u01c1BackgroundWorker\u01c1__init____mutmut_2": null,
+        "smart_doc_tracker.web._background_worker.x\u01c1BackgroundWorker\u01c1__init____mutmut_3": null,
+        "smart_doc_tracker.web._background_worker.x\u01c1BackgroundWorker\u01c1__init____mutmut_4": null,
+        "smart_doc_tracker.web._background_worker.x\u01c1BackgroundWorker\u01c1__init____mutmut_5": null,
+        "smart_doc_tracker.web._background_worker.x\u01c1BackgroundWorker\u01c1__init____mutmut_6": null,
+        "smart_doc_tracker.web._background_worker.x\u01c1BackgroundWorker\u01c1__init____mutmut_7": null,
+        "smart_doc_tracker.web._background_worker.x\u01c1BackgroundWorker\u01c1__init____mutmut_8": null,
+        "smart_doc_tracker.web._background_worker.x\u01c1BackgroundWorker\u01c1__init____mutmut_9": null,
+        "smart_doc_tracker.web._background_worker.x\u01c1BackgroundWorker\u01c1__init____mutmut_10": null,
+        "smart_doc_tracker.web._background_worker.x\u01c1BackgroundWorker\u01c1__init____mutmut_11": null,
+        "smart_doc_tracker.web._background_worker.x\u01c1BackgroundWorker\u01c1__init____mutmut_12": null,
+        "smart_doc_tracker.web._background_worker.x\u01c1BackgroundWorker\u01c1submit__mutmut_1": null,
+        "smart_doc_tracker.web._background_worker.x\u01c1BackgroundWorker\u01c1submit__mutmut_2": null,
+        "smart_doc_tracker.web._background_worker.x\u01c1BackgroundWorker\u01c1submit__mutmut_3": null,
+        "smart_doc_tracker.web._background_worker.x\u01c1BackgroundWorker\u01c1submit__mutmut_4": null,
+        "smart_doc_tracker.web._background_worker.x\u01c1BackgroundWorker\u01c1submit__mutmut_5": null,
+        "smart_doc_tracker.web._background_worker.x\u01c1BackgroundWorker\u01c1close__mutmut_1": null,
+        "smart_doc_tracker.web._background_worker.x\u01c1BackgroundWorker\u01c1_work__mutmut_1": null,
+        "smart_doc_tracker.web._background_worker.x\u01c1BackgroundWorker\u01c1_work__mutmut_2": null,
+        "smart_doc_tracker.web._background_worker.x\u01c1BackgroundWorker\u01c1_work__mutmut_3": null,
+        "smart_doc_tracker.web._background_worker.x\u01c1BackgroundWorker\u01c1_work__mutmut_4": null,
+        "smart_doc_tracker.web._background_worker.x\u01c1BackgroundWorker\u01c1_work__mutmut_5": null
+    },
+    "hash_by_function_name": {
+        "x\u01c1BackgroundWorker\u01c1__init__": "5e19f52ca765",
+        "x\u01c1BackgroundWorker\u01c1submit": "2bd3d0c6183f",
+        "x\u01c1BackgroundWorker\u01c1close": "f72135524447",
+        "x\u01c1BackgroundWorker\u01c1_work": "5e906d224930"
+    },
+    "type_check_error_by_key": {},
+    "durations_by_key": {},
+    "estimated_durations_by_key": {}
+}

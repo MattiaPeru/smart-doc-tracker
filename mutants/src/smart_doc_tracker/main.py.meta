@@ -1,0 +1,15 @@
+{
+    "exit_code_by_key": {
+        "smart_doc_tracker.main.x_run__mutmut_1": null,
+        "smart_doc_tracker.main.x_run__mutmut_2": null,
+        "smart_doc_tracker.main.x_run__mutmut_3": null,
+        "smart_doc_tracker.main.x_run__mutmut_4": null,
+        "smart_doc_tracker.main.x_run__mutmut_5": null
+    },
+    "hash_by_function_name": {
+        "x_run": "863c358da033"
+    },
+    "type_check_error_by_key": {},
+    "durations_by_key": {},
+    "estimated_durations_by_key": {}
+}

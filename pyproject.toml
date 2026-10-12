@@ -77,8 +77,13 @@ addopts = ["--strict-config", "--strict-markers"]
 testpaths = ["tests"]
 
 [tool.mutmut]
-source_paths = ["src/smart_doc_tracker/core/parser.py"]
-pytest_add_cli_args_test_selection = ["tests/core"]
+source_paths = ["src/smart_doc_tracker"]
+also_copy = ["scripts", "docs/agent"]
+# Mutmut's instrumented source cannot match the committed API snapshot.
+pytest_add_cli_args_test_selection = [
+    "tests",
+    "--deselect=tests/scripts/test_generate_agent_reference.py::AgentReferenceGeneratorTests::test_committed_reference_matches_the_current_public_api",
+]
 
 [tool.coverage.run]
 branch = true
