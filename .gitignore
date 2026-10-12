@@ -10,3 +10,4 @@ htmlcov/
 *.py[cod]
 data/
 TODO.txt
+.venv_wsl
