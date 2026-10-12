@@ -9,6 +9,18 @@ from smart_doc_tracker.models.document import DocumentData
 
 
 class DocumentDataTests(TestCase):
+    def test_defaults_optional_document_fields_independently(self) -> None:
+        first = DocumentData(document_type="invoice", summary="First invoice")
+        second = DocumentData(document_type="invoice", summary="Second invoice")
+
+        self.assertIsNone(first.expiry_date)
+        self.assertIsNone(first.issue_date)
+        self.assertEqual(first.extracted_data, {})
+        self.assertIsNone(second.expiry_date)
+        self.assertIsNone(second.issue_date)
+        self.assertEqual(second.extracted_data, {})
+        self.assertIsNot(first.extracted_data, second.extracted_data)
+
     def test_normalizes_envelope_and_common_date_formats(self) -> None:
         document = DocumentData.model_validate(
             {

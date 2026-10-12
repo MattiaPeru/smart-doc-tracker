@@ -752,10 +752,10 @@ Fields:
 
 - `document_type: str = Field(min_length=1, max_length=100)`
 - `summary: str = Field(min_length=1, max_length=1000)`
-- `expiry_date: date | None`
-- `issue_date: date | None`
+- `expiry_date: date | None = None`
+- `issue_date: date | None = None`
 - `notification_days_before: int | None = Field(default=None, ge=0, le=3650)`
-- `extracted_data: dict[str, Any]`
+- `extracted_data: dict[str, Any] = Field(default_factory=dict)`
 
 Methods:
 

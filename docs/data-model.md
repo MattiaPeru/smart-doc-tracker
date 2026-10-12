@@ -33,6 +33,8 @@ vary by document type without creating a collection per type.
 - `summary` is required and limited to 1,000 characters.
 - Dates are optional and normalized from `YYYY-MM-DD`, `DD/MM/YYYY`, `DD-MM-YYYY`,
   or `YYYY/MM/DD`.
+- `extracted_data` is optional and defaults to an empty object when no additional
+  facts are available.
 - `notification_days_before` is either `null` to follow the current application
   default or an integer from 0 through 3,650 for a document-specific override.
 - Empty, `none`, `null`, `n/a`, `unknown`, and `not_applicable` date strings become

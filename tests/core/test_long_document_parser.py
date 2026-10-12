@@ -18,6 +18,22 @@ class SequencedGenerator:
 
 
 class LongDocumentParserTests(TestCase):
+    def test_accepts_chunk_with_only_required_fields(self) -> None:
+        generator = SequencedGenerator(
+            [{"document_type": "report", "summary": "A short report."}]
+        )
+        pages = (ExtractedPage(1, "Report text", False),)
+
+        result = LongDocumentParser(generator).parse_pages(pages)
+
+        self.assertEqual(result.document.document_type, "report")
+        self.assertEqual(result.document.summary, "A short report.")
+        self.assertIsNone(result.document.expiry_date)
+        self.assertIsNone(result.document.issue_date)
+        self.assertEqual(result.document.extracted_data, {})
+        self.assertEqual(len(result.sections), 1)
+        self.assertEqual(len(generator.calls), 1)
+
     def test_chunks_pages_and_merges_generic_structured_data(self) -> None:
         generator = SequencedGenerator(
             [

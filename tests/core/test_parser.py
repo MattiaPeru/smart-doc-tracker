@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 from unittest import TestCase
 
 from smart_doc_tracker.core.parser import (
@@ -39,7 +40,7 @@ class DocumentParserTests(TestCase):
         self.assertIn('"expiry_date": "2030-12-31"', SYSTEM_PROMPT)
         self.assertIn('"issue_date": null', SYSTEM_PROMPT)
         self.assertIn('"extracted_data": {', SYSTEM_PROMPT)
-        self.assertIn("All five top-level fields are required", SYSTEM_PROMPT)
+        self.assertIn("Only document_type and summary are required", SYSTEM_PROMPT)
         self.assertIn("Translate the semantic meaning", SYSTEM_PROMPT)
         self.assertIn('"nazionalità" becomes "nationality"', SYSTEM_PROMPT)
         self.assertIn("only lowercase ASCII", SYSTEM_PROMPT)
@@ -65,6 +66,9 @@ class DocumentParserTests(TestCase):
         document = DocumentParser(generator).parse("OCR contents")
 
         self.assertEqual(document.document_type, "insurance_policy")
+        self.assertEqual(document.summary, "A vehicle insurance policy")
+        self.assertEqual(document.expiry_date, date(2031, 4, 15))
+        self.assertEqual(document.issue_date, date(2026, 4, 15))
         self.assertEqual(document.extracted_data, {"policy_number": "P-123"})
         self.assertEqual(len(generator.calls), 1)
         self.assertEqual(generator.calls[0][0], SYSTEM_PROMPT)
@@ -81,6 +85,10 @@ class DocumentParserTests(TestCase):
         document = DocumentParser(generator).parse("OCR contents")
 
         self.assertEqual(document.document_type, "invoice")
+        self.assertEqual(document.summary, "Invoice")
+        self.assertIsNone(document.expiry_date)
+        self.assertIsNone(document.issue_date)
+        self.assertEqual(document.extracted_data, {})
 
     def test_recovers_nested_containers_encoded_as_json_strings(self) -> None:
         generator = FakeGenerator(
@@ -131,6 +139,7 @@ class DocumentParserTests(TestCase):
         )
         self.assertEqual(len(generator.calls), 2)
         self.assertIn("previous extraction was rejected", generator.calls[1][0])
+        self.assertEqual(generator.calls[1][1], generator.calls[0][1])
 
     def test_rejects_placeholder_when_local_retry_is_also_incomplete(self) -> None:
         incomplete = json.dumps(
@@ -169,6 +178,144 @@ class DocumentParserTests(TestCase):
         self.assertEqual(
             raised.exception.generated_response, "private invalid model output"
         )
+        self.assertEqual(len(generator.calls), 2)
+
+    def test_retries_missing_required_field_with_corrected_output(self) -> None:
+        corrected = {
+            "document_type": "invoice",
+            "summary": "An invoice",
+            "expiry_date": None,
+            "issue_date": None,
+            "extracted_data": {},
+        }
+        generator = SequencedGenerator(
+            [
+                json.dumps(
+                    {key: value for key, value in corrected.items() if key != "summary"}
+                ),
+                json.dumps(corrected),
+            ]
+        )
+
+        document = DocumentParser(generator).parse("OCR contents")
+
+        self.assertEqual(document.summary, "An invoice")
+        self.assertEqual(len(generator.calls), 2)
+
+    def test_rejects_each_missing_required_field(self) -> None:
+        complete = {
+            "document_type": "invoice",
+            "summary": "An invoice",
+            "expiry_date": None,
+            "issue_date": None,
+            "extracted_data": {},
+        }
+        for missing in ("document_type", "summary"):
+            with self.subTest(missing=missing):
+                response = json.dumps(
+                    {key: value for key, value in complete.items() if key != missing}
+                )
+                generator = FakeGenerator(response)
+
+                with self.assertRaisesRegex(
+                    DocumentParsingError, "not valid structured output"
+                ) as raised:
+                    DocumentParser(generator).parse("OCR contents")
+
+                self.assertEqual(raised.exception.generated_response, response)
+                self.assertEqual(len(generator.calls), 2)
+
+    def test_accepts_omitted_optional_fields_without_retry(self) -> None:
+        complete = {
+            "document_type": "invoice",
+            "summary": "An invoice",
+            "expiry_date": "2031-04-15",
+            "issue_date": "2026-04-15",
+            "extracted_data": {"invoice_number": "42"},
+        }
+        for omitted in (
+            ("expiry_date",),
+            ("issue_date",),
+            ("extracted_data",),
+            ("expiry_date", "issue_date", "extracted_data"),
+        ):
+            with self.subTest(omitted=omitted):
+                generator = FakeGenerator(
+                    json.dumps(
+                        {
+                            key: value
+                            for key, value in complete.items()
+                            if key not in omitted
+                        }
+                    )
+                )
+
+                document = DocumentParser(generator).parse("OCR contents")
+
+                self.assertEqual(document.document_type, "invoice")
+                self.assertEqual(document.summary, "An invoice")
+                self.assertEqual(
+                    document.expiry_date,
+                    None if "expiry_date" in omitted else date(2031, 4, 15),
+                )
+                self.assertEqual(
+                    document.issue_date,
+                    None if "issue_date" in omitted else date(2026, 4, 15),
+                )
+                self.assertEqual(
+                    document.extracted_data,
+                    {} if "extracted_data" in omitted else {"invoice_number": "42"},
+                )
+                self.assertEqual(len(generator.calls), 1)
+
+    def test_rejects_generated_notification_settings(self) -> None:
+        generator = FakeGenerator(
+            json.dumps(
+                {
+                    "document_type": "invoice",
+                    "summary": "An invoice",
+                    "expiry_date": None,
+                    "issue_date": None,
+                    "extracted_data": {},
+                    "notification_days_before": 14,
+                }
+            )
+        )
+
+        with self.assertRaisesRegex(DocumentParsingError, "not valid structured"):
+            DocumentParser(generator).parse("OCR contents")
+
+        self.assertEqual(len(generator.calls), 2)
+
+    def test_rejects_invalid_keys_inside_encoded_nested_containers(self) -> None:
+        generator = FakeGenerator(
+            json.dumps(
+                {
+                    "document_type": "invoice",
+                    "summary": "An invoice",
+                    "expiry_date": None,
+                    "issue_date": None,
+                    "extracted_data": {"items": '[{"Invoice Number":"42"}]'},
+                }
+            )
+        )
+
+        with self.assertRaisesRegex(DocumentParsingError, "not valid structured"):
+            DocumentParser(generator).parse("OCR contents")
+
+        self.assertEqual(len(generator.calls), 2)
+
+    def test_rejects_text_before_generated_json(self) -> None:
+        generator = FakeGenerator(
+            'Here is the result: {"document_type":"invoice",'
+            '"summary":"An invoice","expiry_date":null,'
+            '"issue_date":null,"extracted_data":{}}'
+        )
+
+        with self.assertRaisesRegex(DocumentParsingError, "not valid structured"):
+            DocumentParser(generator).parse("OCR contents")
+
+        self.assertEqual(len(generator.calls), 2)
 
     def test_enforces_local_input_size_limit(self) -> None:
         generator = FakeGenerator("{}")
@@ -177,6 +324,25 @@ class DocumentParserTests(TestCase):
             DocumentParser(generator, max_ocr_characters=3).parse("four")
 
         self.assertEqual(generator.calls, [])
+
+    def test_accepts_input_at_exact_size_limit(self) -> None:
+        generator = FakeGenerator(
+            json.dumps(
+                {
+                    "document_type": "invoice",
+                    "summary": "An invoice",
+                    "expiry_date": None,
+                    "issue_date": None,
+                    "extracted_data": {},
+                }
+            )
+        )
+
+        document = DocumentParser(generator, max_ocr_characters=4).parse("four")
+
+        self.assertEqual(document.document_type, "invoice")
+        self.assertEqual(len(generator.calls), 1)
+        self.assertEqual(generator.calls[0][1].count("four"), 1)
 
     def test_rejects_duplicate_generated_keys(self) -> None:
         generator = FakeGenerator(
@@ -187,3 +353,17 @@ class DocumentParserTests(TestCase):
 
         with self.assertRaisesRegex(DocumentParsingError, "not valid structured"):
             DocumentParser(generator).parse("OCR contents")
+
+        self.assertEqual(len(generator.calls), 2)
+
+    def test_rejects_duplicate_keys_in_nested_objects(self) -> None:
+        generator = FakeGenerator(
+            '{"document_type":"invoice","summary":"An invoice",'
+            '"expiry_date":null,"issue_date":null,'
+            '"extracted_data":{"address":{"city":"Rome","city":"Milan"}}}'
+        )
+
+        with self.assertRaisesRegex(DocumentParsingError, "not valid structured"):
+            DocumentParser(generator).parse("OCR contents")
+
+        self.assertEqual(len(generator.calls), 2)
