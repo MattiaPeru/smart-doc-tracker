@@ -12,3 +12,4 @@ data/
 TODO.txt
 .venv_wsl
 build
+/mutants/
