@@ -6,7 +6,6 @@ import json
 import logging
 import shutil
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -15,6 +14,7 @@ from threading import Lock
 from uuid import uuid4
 
 from ..pipeline import DocumentProcessingResult, DocumentProcessingStage
+from ._background_worker import BackgroundWorker
 from .pending import PendingDocumentService
 
 _LOGGER = logging.getLogger(__name__)
@@ -74,12 +74,9 @@ class UploadJobService:
         self._queue_path.mkdir(parents=True, exist_ok=True)
         self._jobs: dict[str, _StoredUploadJob] = {}
         self._lock = Lock()
-        self._executor = ThreadPoolExecutor(
-            max_workers=1,
-            thread_name_prefix="smart-doc-upload",
-        )
+        self._worker = BackgroundWorker(self._run, name="smart-doc-upload")
         for job_id in self._load():
-            self._executor.submit(self._run, job_id)
+            self._worker.submit(job_id)
 
     def submit(self, path: Path, *, file_name: str, language: str) -> UploadJob:
         """Move an upload into durable local storage and queue it."""
@@ -98,7 +95,7 @@ class UploadJobService:
             with self._lock:
                 self._jobs[job.id] = stored
                 self._persist(stored)
-            self._executor.submit(self._run, job.id)
+            self._worker.submit(job.id)
         except Exception:
             with self._lock:
                 self._jobs.pop(job.id, None)
@@ -172,7 +169,7 @@ class UploadJobService:
             self._persist(queued)
             self._jobs[job_id] = queued
             try:
-                self._executor.submit(self._run, job_id)
+                self._worker.submit(job_id)
             except RuntimeError:
                 self._jobs[job_id] = stored
                 self._persist(stored)
@@ -198,8 +195,8 @@ class UploadJobService:
         return sum(self.discard_failed(job_id) for job_id in job_ids)
 
     def close(self) -> None:
-        """Finish accepted work while retaining durable queue state."""
-        self._executor.shutdown(wait=True, cancel_futures=False)
+        """Stop promptly and leave unfinished jobs for the next start."""
+        self._worker.close()
 
     def _load(self) -> list[str]:
         """Load valid manifests and reset interrupted work to queued."""
@@ -225,7 +222,19 @@ class UploadJobService:
                 UploadJobStatus.EXTRACTING,
                 UploadJobStatus.PARSING,
             }:
-                if source_path.is_file():
+                pending = self._pending_documents.get(job.id)
+                if pending is not None:
+                    source_path.unlink(missing_ok=True)
+                    job = replace(
+                        job,
+                        status=UploadJobStatus.AWAITING_CONFIRMATION,
+                        updated_at=datetime.now(UTC),
+                        pending_id=pending.id,
+                        error=None,
+                    )
+                    stored = replace(stored, job=job)
+                    self._persist(stored)
+                elif source_path.is_file():
                     job = replace(
                         job,
                         status=UploadJobStatus.QUEUED,
@@ -249,6 +258,8 @@ class UploadJobService:
 
     def _run(self, job_id: str) -> None:
         """Process one durable source and transfer it to confirmation staging."""
+        if self._worker.stopping:
+            return
         with self._lock:
             stored = self._jobs[job_id]
         try:
@@ -259,6 +270,8 @@ class UploadJobService:
                 stored.language,
                 lambda stage: self._report_stage(job_id, stage),
             )
+            if self._worker.stopping:
+                return
             if result.document is None:
                 raise RuntimeError("Structured processing returned no document")
             pending = self._pending_documents.add(
@@ -267,6 +280,7 @@ class UploadJobService:
                 raw_text=result.raw_text,
                 document=result.document,
                 sections=result.sections,
+                identifier=job_id,
             )
             self._update(
                 job_id,
@@ -275,6 +289,8 @@ class UploadJobService:
             )
             _LOGGER.info("Upload job %s is ready for confirmation.", job_id)
         except Exception as exc:
+            if self._worker.stopping:
+                return
             # Exception messages can contain OCR or model output. Record the type
             # and job identifier for terminal diagnostics without leaking content.
             _LOGGER.error(
@@ -296,6 +312,8 @@ class UploadJobService:
         }
         status = status_by_stage.get(stage)
         if status is not None:
+            if self._worker.stopping:
+                return
             self._set_status(job_id, status)
         _LOGGER.info(
             "Upload job %s: %s.",

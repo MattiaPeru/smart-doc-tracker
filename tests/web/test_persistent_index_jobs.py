@@ -162,3 +162,41 @@ class PersistentIndexJobTests(TestCase):
                 self.assertFalse((queue_path / "job-id.json").exists())
             finally:
                 jobs.close()
+
+    def test_shutdown_leaves_active_and_queued_refreshes_for_restart(self) -> None:
+        with TemporaryDirectory() as directory:
+            queue_path = Path(directory) / "index_update_queue"
+            vector = BlockingVectorIndex()
+            first = DocumentIndexJobService(
+                lambda: FakeRepository(_record()),
+                vector,  # type: ignore[arg-type]
+                queue_path,
+            )
+            try:
+                submitted = [first.submit("document-id") for _ in range(2)]
+                self.assertTrue(vector.started.wait(timeout=1))
+                before = time.monotonic()
+                first.close()
+                self.assertLess(time.monotonic() - before, 0.5)
+                vector.release.set()
+                time.sleep(0.05)
+                self.assertEqual(len(vector.updated), 1)
+                self.assertTrue(all((queue_path / f"{job.id}.json").exists() for job in submitted))
+
+                resumed = DocumentIndexJobService(
+                    lambda: FakeRepository(_record()),
+                    vector,  # type: ignore[arg-type]
+                    queue_path,
+                )
+                try:
+                    for _ in range(100):
+                        if all(resumed.get(job.id).status == "completed" for job in submitted):
+                            break
+                        time.sleep(0.01)
+                    self.assertTrue(all(resumed.get(job.id).status == "completed" for job in submitted))
+                    self.assertEqual(len(vector.updated), 3)
+                finally:
+                    resumed.close()
+            finally:
+                vector.release.set()
+                first.close()

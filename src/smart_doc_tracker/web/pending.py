@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -58,11 +59,16 @@ class PendingDocumentService:
         raw_text: str,
         document: DocumentData,
         sections: tuple[StructuredDocumentSection, ...] = (),
+        identifier: str | None = None,
     ) -> PendingDocument:
         """Take durable ownership of one parsed source file."""
-        identifier = uuid4().hex
+        identifier = identifier or uuid4().hex
+        if re.fullmatch(r"[A-Za-z0-9_-]+", identifier) is None:
+            raise ValueError("The pending identifier is invalid.")
+        with self._lock:
+            if identifier in self._items:
+                raise PendingDocumentError("Pending document already exists.")
         staged_path = self._pending_path / f"{identifier}{source_path.suffix.lower()}"
-        shutil.move(str(source_path), str(staged_path))
         item = PendingDocument(
             id=identifier,
             file_name=Path(file_name).name,
@@ -73,6 +79,7 @@ class PendingDocumentService:
             created_at=datetime.now(UTC),
         )
         try:
+            shutil.copy2(source_path, staged_path)
             with self._lock:
                 self._items[item.id] = item
                 self._persist(item)
@@ -82,6 +89,7 @@ class PendingDocumentService:
             self._manifest_path(item.id).unlink(missing_ok=True)
             staged_path.unlink(missing_ok=True)
             raise
+        source_path.unlink(missing_ok=True)
         return item
 
     def list(self) -> list[PendingDocument]:
@@ -156,6 +164,10 @@ class PendingDocumentService:
                 continue
             if source_path.is_file():
                 self._items[item.id] = item
+        owned_sources = {item.source_path for item in self._items.values()}
+        for path in self._pending_path.iterdir():
+            if path.is_file() and path.suffix != ".json" and path not in owned_sources:
+                path.unlink(missing_ok=True)
 
     def _persist(self, item: PendingDocument) -> None:
         """Atomically persist extracted data in the private local staging area."""

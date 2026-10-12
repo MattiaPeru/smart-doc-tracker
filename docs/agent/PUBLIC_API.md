@@ -1157,6 +1157,23 @@ Methods:
 - `load(self) -> ReminderSettings` — Return persisted settings or application defaults when absent.
 - `save(self, settings: ReminderSettings) -> ReminderSettings` — Atomically replace the local settings file with validated values.
 
+## `smart_doc_tracker.web._background_worker`
+
+Source: [`src/smart_doc_tracker/web/_background_worker.py`](../../src/smart_doc_tracker/web/_background_worker.py)
+
+A stoppable daemon worker for durable local jobs.
+
+### `BackgroundWorker`
+
+Run queued identifiers without delaying process shutdown.
+
+Methods:
+
+- `__init__(self, run: Callable[[str], None], *, name: str) -> None` — Start one daemon thread for the supplied job callback.
+- `stopping(self) -> bool` — Report whether shutdown has been requested.
+- `submit(self, job_id: str) -> None` — Queue an identifier while this worker accepts work.
+- `close(self) -> None` — Stop accepting work and return without waiting for an active job.
+
 ## `smart_doc_tracker.web.app`
 
 Source: [`src/smart_doc_tracker/web/app.py`](../../src/smart_doc_tracker/web/app.py)
@@ -1248,7 +1265,7 @@ Methods:
 - `__init__(self, repository_factory: RepositoryFactory, vector_index: DocumentVectorIndex, queue_path: str | Path = Path('data/index_update_queue'), operation_lock: LockType | None = None) -> None` — Load durable jobs and resume unfinished local refreshes.
 - `submit(self, document_id: str) -> IndexUpdateJob` — Durably queue the latest stored version of one document.
 - `get(self, job_id: str) -> IndexUpdateJob | None` — Return one stable in-memory job snapshot.
-- `close(self) -> None` — Finish accepted refreshes while retaining failed durable jobs.
+- `close(self) -> None` — Stop promptly and leave unfinished refreshes for the next start.
 
 ## `smart_doc_tracker.web.jobs`
 
@@ -1291,7 +1308,7 @@ Methods:
 - `retry_failed(self, job_id: str) -> bool` — Queue one failed job again when its local source is available.
 - `retry_all_failed(self) -> int` — Queue every failed job with an available local source.
 - `discard_all_failed(self) -> int` — Remove all failed jobs and their owned local source files.
-- `close(self) -> None` — Finish accepted work while retaining durable queue state.
+- `close(self) -> None` — Stop promptly and leave unfinished jobs for the next start.
 
 ## `smart_doc_tracker.web.local_services`
 
@@ -1354,7 +1371,7 @@ Persist staged uploads until they are confirmed or rejected.
 Methods:
 
 - `__init__(self, processed_path: str | Path = Path('data/processed'), pending_path: str | Path | None = None) -> None` — Configure local archive and durable confirmation staging paths.
-- `add(self, source_path: Path, *, file_name: str, raw_text: str, document: DocumentData, sections: tuple[StructuredDocumentSection, ...] = ()) -> PendingDocument` — Take durable ownership of one parsed source file.
+- `add(self, source_path: Path, *, file_name: str, raw_text: str, document: DocumentData, sections: tuple[StructuredDocumentSection, ...] = (), identifier: str | None = None) -> PendingDocument` — Take durable ownership of one parsed source file.
 - `list(self) -> list[PendingDocument]` — Return stable pending snapshots in creation order.
 - `get(self, pending_id: str) -> PendingDocument | None` — Return one pending document snapshot.
 - `archive(self, pending_id: str) -> Path` — Move a confirmed source into processed and remove its manifest.

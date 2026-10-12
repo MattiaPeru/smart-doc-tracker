@@ -227,7 +227,7 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        """Close bounded workers and shared local connections cleanly."""
+        """Stop workers promptly and release shared local connections."""
         yield
         jobs.close()
         if index_jobs is not None:

@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 from _thread import LockType
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -17,6 +16,7 @@ from ..db.database import StoredDocument
 from ..interfaces.document_repository import DocumentRepository
 from ..interfaces.document_vector_index import DocumentVectorIndex
 from ..mutation_pipeline import RepositoryFactory
+from ._background_worker import BackgroundWorker
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -59,12 +59,9 @@ class DocumentIndexJobService:
         self._operation_lock = operation_lock or Lock()
         self._jobs: dict[str, IndexUpdateJob] = {}
         self._lock = Lock()
-        self._executor = ThreadPoolExecutor(
-            max_workers=1,
-            thread_name_prefix="smart-doc-index-update",
-        )
+        self._worker = BackgroundWorker(self._run, name="smart-doc-index-update")
         for job_id in self._load():
-            self._executor.submit(self._run, job_id)
+            self._worker.submit(job_id)
 
     def submit(self, document_id: str) -> IndexUpdateJob:
         """Durably queue the latest stored version of one document."""
@@ -82,7 +79,7 @@ class DocumentIndexJobService:
             with self._lock:
                 self._jobs[job.id] = job
                 self._persist(job)
-            self._executor.submit(self._run, job.id)
+            self._worker.submit(job.id)
         except Exception:
             with self._lock:
                 self._jobs.pop(job.id, None)
@@ -97,8 +94,8 @@ class DocumentIndexJobService:
             return self._jobs.get(job_id)
 
     def close(self) -> None:
-        """Finish accepted refreshes while retaining failed durable jobs."""
-        self._executor.shutdown(wait=True, cancel_futures=False)
+        """Stop promptly and leave unfinished refreshes for the next start."""
+        self._worker.close()
 
     def _load(self) -> list[str]:
         """Load valid manifests and reset unfinished work to queued."""
@@ -132,6 +129,8 @@ class DocumentIndexJobService:
 
     def _run(self, job_id: str) -> None:
         """Refresh mutable search fragments from the latest stored document."""
+        if self._worker.stopping:
+            return
         try:
             _LOGGER.info("Search refresh job %s started.", job_id)
             self._set_status(job_id, IndexUpdateStatus.UPDATING)
@@ -139,14 +138,20 @@ class DocumentIndexJobService:
                 with self._repository_factory() as repository:
                     document = self._get_document(repository, job_id)
                 if document is not None:
+                    if self._worker.stopping:
+                        return
                     self._vector_index.update_document_data(
                         document.id,
                         document.document,
                     )
+            if self._worker.stopping:
+                return
             self._set_status(job_id, IndexUpdateStatus.COMPLETED)
             self._manifest_path(job_id).unlink(missing_ok=True)
             _LOGGER.info("Search refresh job %s completed.", job_id)
         except Exception as exc:
+            if self._worker.stopping:
+                return
             # Do not include exception text: adapters may embed document data in it.
             _LOGGER.error(
                 "Search refresh job %s failed (%s).",

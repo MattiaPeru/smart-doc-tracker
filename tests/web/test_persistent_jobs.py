@@ -5,6 +5,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from threading import Event
 from unittest import TestCase
 
 from smart_doc_tracker.models.document import DocumentData
@@ -82,7 +83,10 @@ class PersistentUploadJobTests(TestCase):
                         break
                     time.sleep(0.01)
                 self.assertEqual(jobs.retry_all_failed(), 2)
-                jobs.close()
+                for _ in range(100):
+                    if all(jobs.get(job_id).status == "failed" for job_id in identifiers):
+                        break
+                    time.sleep(0.01)
                 self.assertTrue(all(jobs.get(job_id).status == "failed" for job_id in identifiers))
                 self.assertEqual(jobs.discard_all_failed(), 2)
                 self.assertEqual(jobs.discard_all_failed(), 0)
@@ -189,6 +193,103 @@ class PersistentUploadJobTests(TestCase):
                     time.sleep(0.01)
                 self.assertEqual(len(processed), 1)
                 self.assertEqual(jobs.get("job-id").status, "awaiting_confirmation")
+                self.assertEqual(len(pending.list()), 1)
+            finally:
+                jobs.close()
+                pending.close()
+
+    def test_shutdown_leaves_active_and_queued_uploads_for_restart(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            queue_path = root / "processing_queue"
+            started = Event()
+            release = Event()
+            processed: list[str] = []
+
+            def blocked_process(
+                path: Path, language: str, reporter: object
+            ) -> DocumentProcessingResult:
+                processed.append(path.name)
+                started.set()
+                release.wait(timeout=5)
+                return DocumentProcessingResult(raw_text="Local text", document=_document())
+
+            pending = PendingDocumentService(root / "processed")
+            first = UploadJobService(blocked_process, pending, queue_path)
+            try:
+                uploads = []
+                for index in range(2):
+                    upload = root / f"upload-{index}.png"
+                    upload.write_bytes(b"local fixture")
+                    uploads.append(first.submit(upload, file_name=upload.name, language="eng"))
+                self.assertTrue(started.wait(timeout=1))
+                before = time.monotonic()
+                first.close()
+                self.assertLess(time.monotonic() - before, 0.5)
+                release.set()
+                time.sleep(0.05)
+                self.assertEqual(len(processed), 1)
+                self.assertEqual(len(pending.list()), 0)
+                self.assertTrue(all((queue_path / f"{job.id}.json").exists() for job in uploads))
+
+                resumed = UploadJobService(blocked_process, pending, queue_path)
+                try:
+                    for _ in range(100):
+                        if all(resumed.get(job.id).status == "awaiting_confirmation" for job in uploads):
+                            break
+                        time.sleep(0.01)
+                    self.assertTrue(all(resumed.get(job.id).status == "awaiting_confirmation" for job in uploads))
+                    self.assertEqual(len(pending.list()), 2)
+                finally:
+                    resumed.close()
+            finally:
+                release.set()
+                first.close()
+                pending.close()
+
+    def test_recovers_transfer_completed_before_job_manifest_update(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            queue_path = root / "processing_queue"
+            queue_path.mkdir()
+            source = queue_path / "job-id.png"
+            source.write_bytes(b"local fixture")
+            pending = PendingDocumentService(root / "processed")
+            staged = pending.add(
+                source,
+                file_name="invoice.png",
+                raw_text="Private local text",
+                document=_document(),
+                identifier="job-id",
+            )
+            now = datetime.now(UTC).isoformat()
+            (queue_path / "job-id.json").write_text(
+                json.dumps(
+                    {
+                        "id": "job-id",
+                        "file_name": "invoice.png",
+                        "status": "parsing",
+                        "created_at": now,
+                        "updated_at": now,
+                        "pending_id": None,
+                        "error": None,
+                        "source_file": source.name,
+                        "language": "eng",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            def unexpected_process(
+                path: Path, language: str, reporter: object
+            ) -> DocumentProcessingResult:
+                self.fail("A transferred document must not be processed again.")
+
+            jobs = UploadJobService(unexpected_process, pending, queue_path)
+            try:
+                restored = jobs.get("job-id")
+                self.assertEqual(restored.status, "awaiting_confirmation")
+                self.assertEqual(restored.pending_id, staged.id)
                 self.assertEqual(len(pending.list()), 1)
             finally:
                 jobs.close()
