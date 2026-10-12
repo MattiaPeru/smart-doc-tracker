@@ -150,6 +150,53 @@ class UploadJobService:
             del self._jobs[job_id]
         return True
 
+    def retry_failed(self, job_id: str) -> bool:
+        """Queue one failed job again when its local source is available."""
+        with self._lock:
+            stored = self._jobs.get(job_id)
+            if (
+                stored is None
+                or stored.job.status is not UploadJobStatus.FAILED
+                or not stored.source_path.is_file()
+            ):
+                return False
+            queued = replace(
+                stored,
+                job=replace(
+                    stored.job,
+                    status=UploadJobStatus.QUEUED,
+                    updated_at=datetime.now(UTC),
+                    error=None,
+                ),
+            )
+            self._persist(queued)
+            self._jobs[job_id] = queued
+            try:
+                self._executor.submit(self._run, job_id)
+            except RuntimeError:
+                self._jobs[job_id] = stored
+                self._persist(stored)
+                raise
+        return True
+
+    def retry_all_failed(self) -> int:
+        """Queue every failed job with an available local source."""
+        with self._lock:
+            job_ids = [
+                job_id for job_id, stored in self._jobs.items()
+                if stored.job.status is UploadJobStatus.FAILED
+            ]
+        return sum(self.retry_failed(job_id) for job_id in job_ids)
+
+    def discard_all_failed(self) -> int:
+        """Remove all failed jobs and their owned local source files."""
+        with self._lock:
+            job_ids = [
+                job_id for job_id, stored in self._jobs.items()
+                if stored.job.status is UploadJobStatus.FAILED
+            ]
+        return sum(self.discard_failed(job_id) for job_id in job_ids)
+
     def close(self) -> None:
         """Finish accepted work while retaining durable queue state."""
         self._executor.shutdown(wait=True, cancel_futures=False)

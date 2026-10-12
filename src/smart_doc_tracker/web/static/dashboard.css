@@ -147,6 +147,9 @@ button.compact { padding: 6px 10px; }
 .documents { min-height: 560px; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); }
 .section-heading h2 { font-family: Georgia, serif; font-size: 1.7rem; }
+.queue-actions, .queue-card-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.queue-card { grid-template-columns: 8px minmax(0, 1fr) auto; cursor: default; }
+.queue-card h3 { overflow-wrap: anywhere; }
 #filter-label { color: var(--muted); font-size: .78rem; }
 .document-grid { display: grid; gap: 12px; padding-top: 16px; }
 
@@ -279,6 +282,8 @@ pre { overflow: auto; border-radius: 8px; padding: 14px; background: #f1f2ef; wh
 .remove-field { font-size: 1.2rem; }
 
 @media (max-width: 780px) {
+  .queue-card { grid-template-columns: 8px minmax(0, 1fr); }
+  .queue-card .expiry { grid-column: 2; }
   .metrics { grid-template-columns: repeat(2, 1fr); }
   .workspace { grid-template-columns: 1fr; }
   .topbar { align-items: center; }

@@ -608,7 +608,48 @@ class WebApplicationTests(TestCase):
         self.assertIn("Reading document", script.text)
         self.assertIn("Organizing information", script.text)
         self.assertIn("discardFailedJob", script.text)
+        self.assertIn("retryFailedJob", script.text)
+        self.assertNotIn("Needs attention", script.text)
+        self.assertIn('id="retry-all-jobs"', dashboard.text)
+        self.assertIn('id="remove-all-jobs"', dashboard.text)
         self.assertIn('method: "DELETE"', script.text)
+
+    def test_retry_and_bulk_queue_routes_handle_empty_or_invalid_jobs(self) -> None:
+        self.assertEqual(self.client.post("/api/jobs/retry-all").json(), {"retried": 0})
+        self.assertEqual(self.client.delete("/api/jobs/failed").json(), {"removed": 0})
+        self.assertEqual(self.client.post("/api/jobs/missing/retry").status_code, 404)
+
+    def test_retry_and_remove_all_failed_uploads_through_api(self) -> None:
+        def fail(path: Path, language: str, reporter: Any) -> DocumentProcessingResult:
+            raise RuntimeError("Private failure detail")
+
+        self.app.state.upload_jobs._processor = fail
+        job_ids = []
+        for index in range(2):
+            response = self.client.post(
+                "/api/uploads",
+                files={"file": (f"failed-{index}.png", b"local fixture", "image/png")},
+                data={"language": "ita"},
+            )
+            self.assertEqual(response.status_code, 202)
+            job_ids.append(response.json()["id"])
+        for _ in range(100):
+            if all(self.client.get(f"/api/jobs/{job_id}").json()["status"] == "failed" for job_id in job_ids):
+                break
+            time.sleep(0.01)
+        self.assertEqual(len(self.client.get("/api/jobs").json()), 2)
+        self.assertEqual(self.client.post(f"/api/jobs/{job_ids[0]}/retry").status_code, 200)
+        for _ in range(100):
+            if self.client.get(f"/api/jobs/{job_ids[0]}").json()["status"] == "failed":
+                break
+            time.sleep(0.01)
+        self.assertEqual(self.client.post("/api/jobs/retry-all").json(), {"retried": 2})
+        for _ in range(100):
+            if all(self.client.get(f"/api/jobs/{job_id}").json()["status"] == "failed" for job_id in job_ids):
+                break
+            time.sleep(0.01)
+        self.assertEqual(self.client.delete("/api/jobs/failed").json(), {"removed": 2})
+        self.assertEqual(self.client.get("/api/jobs").json(), [])
 
     def test_dashboard_shows_confirmation_errors_inside_review_dialog(self) -> None:
         script = self.dashboard_source()

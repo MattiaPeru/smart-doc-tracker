@@ -97,6 +97,10 @@
               <p class="eyebrow">Persistent local processing</p>
               <h2>Processing queue</h2>
             </div>
+            <div class="queue-actions">
+              <button id="retry-all-jobs" class="secondary compact" type="button" disabled>Retry all</button>
+              <button id="remove-all-jobs" class="danger-button compact" type="button" disabled>Remove all</button>
+            </div>
           </div>
           <p class="panel-intro">Queued files are processed one at a time and resume automatically after a restart.</p>
           <div id="queue-grid" class="document-grid" aria-live="polite"></div>

@@ -1288,6 +1288,9 @@ Methods:
 - `list_processing(self) -> list[UploadJob]` — List queued, active, and failed jobs in creation order.
 - `discard_for_pending(self, pending_id: str) -> None` — Remove completed job metadata after confirmation or rejection.
 - `discard_failed(self, job_id: str) -> bool` — Remove one failed job and its owned local source file.
+- `retry_failed(self, job_id: str) -> bool` — Queue one failed job again when its local source is available.
+- `retry_all_failed(self) -> int` — Queue every failed job with an available local source.
+- `discard_all_failed(self) -> int` — Remove all failed jobs and their owned local source files.
 - `close(self) -> None` — Finish accepted work while retaining durable queue state.
 
 ## `smart_doc_tracker.web.local_services`

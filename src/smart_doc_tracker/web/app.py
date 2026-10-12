@@ -737,8 +737,18 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
 
     @app.get("/api/jobs", response_model=list[UploadJobResponse])
     def list_upload_jobs() -> list[UploadJobResponse]:
-        """List documents queued, processing, or requiring attention."""
+        """List documents queued, processing, or failed."""
         return [UploadJobResponse.from_job(job) for job in jobs.list_processing()]
+
+    @app.post("/api/jobs/retry-all")
+    def retry_all_failed_upload_jobs() -> dict[str, int]:
+        """Retry all failed uploads with available local source files."""
+        return {"retried": jobs.retry_all_failed()}
+
+    @app.delete("/api/jobs/failed")
+    def discard_all_failed_upload_jobs() -> dict[str, int]:
+        """Discard all failed uploads and their local source files."""
+        return {"removed": jobs.discard_all_failed()}
 
     @app.get("/api/jobs/{job_id}", response_model=UploadJobResponse)
     def get_upload_job(job_id: str) -> UploadJobResponse:
@@ -747,6 +757,22 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
         if job is None:
             raise HTTPException(status_code=404, detail="Upload job not found.")
         return UploadJobResponse.from_job(job)
+
+    @app.post("/api/jobs/{job_id}/retry", response_model=UploadJobResponse)
+    def retry_failed_upload_job(job_id: str) -> UploadJobResponse:
+        """Retry one failed upload using its retained local source."""
+        job = jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Upload job not found.")
+        if not jobs.retry_failed(job_id):
+            raise HTTPException(
+                status_code=409,
+                detail="Only failed uploads with a local source file can be retried.",
+            )
+        queued = jobs.get(job_id)
+        if queued is None:
+            raise HTTPException(status_code=404, detail="Upload job not found.")
+        return UploadJobResponse.from_job(queued)
 
     @app.delete("/api/jobs/{job_id}", status_code=204)
     def discard_failed_upload_job(job_id: str) -> None:

@@ -24,6 +24,73 @@ def _document() -> DocumentData:
 
 
 class PersistentUploadJobTests(TestCase):
+    def test_retries_failed_job_from_its_retained_source(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            attempts = 0
+
+            def process(path: Path, language: str, reporter: object) -> DocumentProcessingResult:
+                nonlocal attempts
+                attempts += 1
+                if attempts == 1:
+                    raise RuntimeError("Private failure detail")
+                return DocumentProcessingResult(raw_text="Private local text", document=_document())
+
+            upload = root / "upload.png"
+            upload.write_bytes(b"local fixture")
+            pending = PendingDocumentService(root / "processed")
+            queue_path = root / "processing_queue"
+            jobs = UploadJobService(process, pending, queue_path)
+            try:
+                submitted = jobs.submit(upload, file_name="invoice.png", language="eng")
+                for _ in range(100):
+                    if jobs.get(submitted.id).status == "failed":
+                        break
+                    time.sleep(0.01)
+                self.assertEqual(jobs.get(submitted.id).status, "failed")
+                self.assertTrue(jobs.retry_failed(submitted.id))
+                self.assertFalse(jobs.retry_failed(submitted.id))
+                for _ in range(100):
+                    if jobs.get(submitted.id).status == "awaiting_confirmation":
+                        break
+                    time.sleep(0.01)
+                self.assertEqual(jobs.get(submitted.id).status, "awaiting_confirmation")
+                self.assertIsNone(jobs.get(submitted.id).error)
+                self.assertEqual(attempts, 2)
+                self.assertEqual(len(pending.list()), 1)
+            finally:
+                jobs.close()
+                pending.close()
+
+    def test_bulk_actions_only_change_failed_jobs(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            def fail(path: Path, language: str, reporter: object) -> DocumentProcessingResult:
+                raise RuntimeError("Private failure detail")
+
+            pending = PendingDocumentService(root / "processed")
+            jobs = UploadJobService(fail, pending, root / "processing_queue")
+            try:
+                identifiers = []
+                for index in range(2):
+                    upload = root / f"upload-{index}.png"
+                    upload.write_bytes(b"local fixture")
+                    identifiers.append(jobs.submit(upload, file_name=upload.name, language="eng").id)
+                for _ in range(100):
+                    if all(jobs.get(job_id).status == "failed" for job_id in identifiers):
+                        break
+                    time.sleep(0.01)
+                self.assertEqual(jobs.retry_all_failed(), 2)
+                jobs.close()
+                self.assertTrue(all(jobs.get(job_id).status == "failed" for job_id in identifiers))
+                self.assertEqual(jobs.discard_all_failed(), 2)
+                self.assertEqual(jobs.discard_all_failed(), 0)
+                self.assertEqual(list((root / "processing_queue").iterdir()), [])
+            finally:
+                jobs.close()
+                pending.close()
+
     def test_discards_failed_job_and_its_local_source(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)

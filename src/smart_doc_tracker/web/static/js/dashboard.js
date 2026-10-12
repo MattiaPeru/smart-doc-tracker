@@ -96,6 +96,9 @@ function processingLabel(status) {
 function renderQueue(items) {
   queueGrid.replaceChildren();
   document.querySelector("#queue-count").textContent = items.length;
+  const hasFailed = items.some((item) => item.status === "failed");
+  document.querySelector("#retry-all-jobs").disabled = !hasFailed;
+  document.querySelector("#remove-all-jobs").disabled = !hasFailed;
   let queuedPosition = 0;
   items.forEach((item) => {
     const card = document.createElement("article");
@@ -107,9 +110,10 @@ function renderQueue(items) {
       <div><h3>${escapeHtml(item.file_name)}</h3>
       <p>${escapeHtml(processingLabel(item.status))}</p></div>
       <div class="expiry">${failed
-        ? `<span>Needs attention</span><button class="danger-button compact discard-job" type="button">Remove</button>`
+        ? `<div class="queue-card-actions"><button class="secondary compact retry-job" type="button">Retry</button><button class="danger-button compact discard-job" type="button">Remove</button></div>`
         : escapeHtml(position)}</div>`;
     if (failed) {
+      card.querySelector(".retry-job").addEventListener("click", () => retryFailedJob(item.id));
       card.querySelector(".discard-job").addEventListener("click", () => discardFailedJob(item.id));
     }
     queueGrid.append(card);
@@ -270,6 +274,43 @@ async function discardFailedJob(jobId) {
     await loadProcessingQueue();
   } catch (error) { showMessage(userMessage(error, "We couldn't remove this upload. Please try again."), true); }
 }
+
+async function retryFailedJob(jobId) {
+  try {
+    const response = await apiFetch(`/api/jobs/${jobId}/retry`, { method: "POST" });
+    if (!response.ok) throw requestError(response, "We couldn't retry this upload. Please try again.");
+    showMessage("Upload queued for retry.");
+    await loadProcessingQueue();
+    monitorJob(jobId).catch((error) => showMessage(
+      userMessage(error, "We couldn't process this document. Please try again."), true,
+    ));
+  } catch (error) { showMessage(userMessage(error, "We couldn't retry this upload. Please try again."), true); }
+}
+
+document.querySelector("#retry-all-jobs").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    const response = await apiFetch("/api/jobs/retry-all", { method: "POST" });
+    if (!response.ok) throw requestError(response, "We couldn't retry the failed uploads. Please try again.");
+    const { retried } = await response.json();
+    showMessage(retried ? `${retried} upload${retried === 1 ? "" : "s"} queued for retry.` : "No failed uploads could be retried.");
+  } catch (error) { showMessage(userMessage(error, "We couldn't retry the failed uploads. Please try again."), true); }
+  finally { await loadProcessingQueue(); }
+});
+
+document.querySelector("#remove-all-jobs").addEventListener("click", async (event) => {
+  if (!window.confirm("Remove all failed uploads from the list?")) return;
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    const response = await apiFetch("/api/jobs/failed", { method: "DELETE" });
+    if (!response.ok) throw requestError(response, "We couldn't remove the failed uploads. Please try again.");
+    const { removed } = await response.json();
+    showMessage(`${removed} failed upload${removed === 1 ? "" : "s"} removed.`);
+  } catch (error) { showMessage(userMessage(error, "We couldn't remove the failed uploads. Please try again."), true); }
+  finally { await loadProcessingQueue(); }
+});
 
 async function deleteDocument(documentId) {
   if (!window.confirm("Delete this document? This action cannot be undone.")) return;
