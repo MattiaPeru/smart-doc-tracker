@@ -611,7 +611,13 @@ class DocumentQuestionPipelineTests(TestCase):
             "Question"
         )
 
+        self.assertEqual(
+            answer.answer,
+            "No indexed document contains enough information to answer.",
+        )
+        self.assertEqual(answer.claims, [])
         self.assertEqual(answer.document_ids, [])
+        self.assertTrue(answer.insufficient_information)
         self.assertEqual(generator.calls, [])
 
     def test_cli_returns_grounded_json_answer_with_injected_local_dependencies(

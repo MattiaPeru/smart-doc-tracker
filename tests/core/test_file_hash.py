@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
@@ -32,3 +33,13 @@ class FileHashTests(TestCase):
     def test_rejects_invalid_chunk_size(self) -> None:
         with self.assertRaisesRegex(ValueError, "positive"):
             calculate_file_sha256("unused", chunk_size=0)
+
+    def test_hashes_with_the_smallest_valid_chunk_size(self) -> None:
+        contents = b"private local document"
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "document.bin"
+            path.write_bytes(contents)
+
+            digest = calculate_file_sha256(path, chunk_size=1)
+
+        self.assertEqual(digest, hashlib.sha256(contents).hexdigest())

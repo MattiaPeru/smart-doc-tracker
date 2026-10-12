@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -15,6 +16,7 @@ class FakeDocumentRepository:
         self.record = record
         self.file_hash: str | None = None
         self.sections: tuple[StructuredDocumentSection, ...] = ()
+        self.sections_document_id: str | None = None
 
     def insert_document(
         self,
@@ -36,6 +38,7 @@ class FakeDocumentRepository:
         document_id: str,
         sections: tuple[StructuredDocumentSection, ...],
     ) -> None:
+        self.sections_document_id = document_id
         self.sections = sections
 
 
@@ -74,5 +77,10 @@ class DocumentStoragePipelineTests(TestCase):
             )
 
         self.assertTrue(result.inserted)
-        self.assertEqual(len(repository.file_hash or ""), 64)
+        self.assertEqual(
+            repository.file_hash, hashlib.sha256(b"local fixture").hexdigest()
+        )
+        self.assertEqual(result.record.file_hash, repository.file_hash)
+        self.assertEqual(result.record.document, document)
+        self.assertEqual(repository.sections_document_id, record.id)
         self.assertEqual(repository.sections, sections)
