@@ -358,9 +358,11 @@ Methods:
 - `close(self) -> None` — Close the owned MongoDB client, if this repository created one.
 - `__enter__(self) -> MongoDocumentRepository` — Return this repository for context-managed use.
 - `__exit__(self, *args: object) -> None` — Close the owned client when leaving the context.
-- `insert_document(self, document: DocumentData, *, file_hash: str, created_at: datetime | None = None) -> DocumentInsertResult` — Insert once by file hash and return the existing record on retries.
+- `insert_document(self, document: DocumentData, *, file_hash: str, created_at: datetime | None = None, insertion_pending: bool = False) -> DocumentInsertResult` — Insert once by file hash and return the existing record on retries.
+- `mark_document_committed(self, document_id: str) -> StoredDocument | None` — Make a verified insertion visible to ordinary local queries.
 - `upsert_document_sections(self, document_id: str, sections: Sequence[StructuredDocumentSection]) -> None` — Persist validated PDF section analyses without storing raw page text.
 - `get_document_by_id(self, document_id: str) -> StoredDocument | None` — Return one stored document, or None for an unknown or invalid identifier.
+- `get_document_by_file_hash(self, file_hash: str) -> StoredDocument | None` — Find a stored record by its validated local source hash.
 - `get_all_documents(self) -> list[StoredDocument]` — Return every stored document in deterministic creation order.
 - `update_document(self, document_id: str, document: DocumentData) -> StoredDocument | None` — Replace validated document fields and preserve persistence metadata.
 - `set_source_file_name(self, document_id: str, source_file_name: str) -> StoredDocument | None` — Attach the safe processed-file name to one stored document.
@@ -378,6 +380,10 @@ Local Chroma persistence for sensitive document search content.
 ### `VectorDatabaseError(RuntimeError)`
 
 Raised when the local vector index cannot complete an operation.
+
+### `VectorDatabaseUnavailableError(VectorDatabaseError)`
+
+Raised when the local Chroma service cannot be reached.
 
 ### `VectorDatabaseDependencyError(VectorDatabaseError)`
 
@@ -537,10 +543,12 @@ Methods:
 
 - `__enter__(self) -> DocumentRepository` — Open the repository context.
 - `__exit__(self, *args: object) -> None` — Close the repository context.
-- `insert_document(self, document: DocumentData, *, file_hash: str) -> DocumentInsertResult` — Persist one validated document using its content hash.
+- `insert_document(self, document: DocumentData, *, file_hash: str, insertion_pending: bool = False) -> DocumentInsertResult` — Persist one validated document using its content hash.
+- `mark_document_committed(self, document_id: str) -> StoredDocument | None` — Expose a verified record to ordinary document queries.
 - `upsert_document_sections(self, document_id: str, sections: Sequence[StructuredDocumentSection]) -> None` — Persist structured page sections for one document.
 - `get_all_documents(self) -> list[StoredDocument]` — Return every stored document.
 - `get_document_by_id(self, document_id: str) -> StoredDocument | None` — Return one stored document by identifier when present.
+- `get_document_by_file_hash(self, file_hash: str) -> StoredDocument | None` — Return one document by source hash when present.
 - `update_document(self, document_id: str, document: DocumentData) -> StoredDocument | None` — Replace validated document fields while preserving record metadata.
 - `set_source_file_name(self, document_id: str, source_file_name: str) -> StoredDocument | None` — Attach one safe processed-file name to a stored document.
 - `delete_document(self, document_id: str) -> StoredDocument | None` — Delete one document and its local structured sections.
@@ -876,6 +884,14 @@ Coordinate application-visible mutations across MongoDB and ChromaDB.
 
 Raised when a coordinated mutation fails and is compensated.
 
+### `DocumentIndexingError(CoordinatedMutationError)`
+
+An insertion remains pending because local indexing failed.
+
+Methods:
+
+- `__init__(self, *, unavailable: bool) -> None` — Record whether Chroma could be reached after the failed operation.
+
 ### `DocumentUpdateResult`
 
 Stored document together with its durable local refresh job.
@@ -895,13 +911,15 @@ Fields:
 - `vector_index: DocumentVectorIndex`
 - `index_update_submitter: IndexUpdateSubmitter`
 - `operation_lock: LockType = field(default_factory=Lock)`
+- `processed_path: Path | None = None`
 
 Methods:
 
 - `create_manual(self, document: DocumentData) -> DocumentInsertResult` — Persist and index user-authored data without an OCR source file.
-- `confirm(self, document: DocumentData, *, file_hash: str, raw_text: str, sections: Sequence[StructuredDocumentSection] = (), finalize: Callable[[], Path] | None = None) -> DocumentInsertResult` — Persist and index one confirmed document before finalizing its source.
+- `confirm(self, document: DocumentData, *, file_hash: str, raw_text: str, sections: Sequence[StructuredDocumentSection] = (), finalize: Callable[[], Path] | None = None, undo_finalize: Callable[[Path], None] | None = None, commit_finalize: Callable[[], None] | None = None, record_insert: Callable[[str], None] | None = None) -> DocumentInsertResult` — Persist and index one confirmed document before finalizing its source.
 - `update(self, document_id: str, document: DocumentData) -> DocumentUpdateResult | None` — Store one update and durably schedule its local search refresh.
-- `delete(self, document_id: str) -> StoredDocument | None` — Delete from ChromaDB and MongoDB, restoring ChromaDB if MongoDB fails.
+- `delete(self, document_id: str) -> StoredDocument | None` — Delete both stores and the archived source, restoring on failure.
+- `cancel_insertion(self, document_id: str) -> None` — Remove both sides of a confirmed but incomplete insertion.
 
 ## `smart_doc_tracker.notifier.desktop`
 
@@ -1304,6 +1322,7 @@ Methods:
 - `get(self, job_id: str) -> UploadJob | None` — Return a stable snapshot of one job.
 - `list_processing(self) -> list[UploadJob]` — List queued, active, and failed jobs in creation order.
 - `discard_for_pending(self, pending_id: str) -> None` — Remove completed job metadata after confirmation or rejection.
+- `fail_pending_insertion(self, pending_id: str) -> None` — Move a rejected index insertion to the OCR retry queue.
 - `discard_failed(self, job_id: str) -> bool` — Remove one failed job and its owned local source file.
 - `retry_failed(self, job_id: str) -> bool` — Queue one failed job again when its local source is available.
 - `retry_all_failed(self) -> int` — Queue every failed job with an available local source.
@@ -1363,6 +1382,13 @@ Fields:
 - `document: DocumentData`
 - `sections: tuple[StructuredDocumentSection, ...]`
 - `created_at: datetime`
+- `confirmation_document: DocumentData | None = None`
+- `insertion_document_id: str | None = None`
+- `archived_file_name: str | None = None`
+- `file_hash: str | None = None`
+- `is_manual: bool = False`
+- `cancelling: bool = False`
+- `index_failures: int = 0`
 
 ### `PendingDocumentService`
 
@@ -1372,9 +1398,18 @@ Methods:
 
 - `__init__(self, processed_path: str | Path = Path('data/processed'), pending_path: str | Path | None = None) -> None` — Configure local archive and durable confirmation staging paths.
 - `add(self, source_path: Path, *, file_name: str, raw_text: str, document: DocumentData, sections: tuple[StructuredDocumentSection, ...] = (), identifier: str | None = None) -> PendingDocument` — Take durable ownership of one parsed source file.
+- `add_manual(self, document: DocumentData) -> PendingDocument` — Durably stage a user-authored document for coordinated insertion.
 - `list(self) -> list[PendingDocument]` — Return stable pending snapshots in creation order.
 - `get(self, pending_id: str) -> PendingDocument | None` — Return one pending document snapshot.
-- `archive(self, pending_id: str) -> Path` — Move a confirmed source into processed and remove its manifest.
+- `insertion_ids(self) -> frozenset[str]` — Return IDs that must stay hidden until both stores commit.
+- `insertion_hashes(self) -> frozenset[str]` — Return source hashes that are still awaiting both local stores.
+- `begin_insertion(self, pending_id: str, document: DocumentData, *, file_hash: str) -> PendingDocument` — Durably record the user's confirmation before touching either store.
+- `mark_cancelling(self, pending_id: str) -> PendingDocument` — Stop automatic retries before cleaning a partial insertion.
+- `record_insertion_id(self, pending_id: str, document_id: str) -> None` — Track a partial local insertion so rejection can remove it.
+- `record_index_failure(self, pending_id: str) -> int` — Persist one failed indexing attempt and return its total.
+- `archive(self, pending_id: str) -> Path` — Move a confirmed source while retaining its recovery manifest.
+- `finish_archive(self, pending_id: str) -> None` — Forget a staged item only after its database link is verified.
+- `restore_archive(self, item: PendingDocument, archived_path: Path) -> None` — Return a source to confirmation staging after a later failure.
 - `reject(self, pending_id: str) -> bool` — Discard one unconfirmed source and its local manifest.
 - `close(self) -> None` — Leave durable confirmation items available for the next start.
 
@@ -1499,6 +1534,7 @@ Fields:
 - `file_name: str`
 - `document: DocumentData`
 - `created_at: datetime`
+- `status: str = 'awaiting_confirmation'`
 
 Methods:
 

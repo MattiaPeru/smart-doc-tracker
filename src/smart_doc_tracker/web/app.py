@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from threading import Lock
+from threading import Event, Lock, Thread
 from typing import Annotated, Any
 from urllib.parse import urlsplit
 
@@ -39,6 +39,7 @@ from ..core.pdf import LocalPDFTextExtractor
 from ..db.database import (
     DatabaseConfigurationError,
     DatabaseError,
+    DocumentInsertResult,
     MongoDocumentRepository,
 )
 from ..db.vector_database import (
@@ -58,11 +59,10 @@ from ..interfaces.document_vector_index import DocumentVectorIndex
 from ..interfaces.text_generator import TextGenerator
 from ..models.document import DocumentData
 from ..models.rag import ConversationTurn
-from ..mutation_pipeline import CoordinatedMutationError, DocumentMutationPipeline
-from ..settings import (
-    LocalReminderSettingsStore,
-    ReminderSettings,
-    ReminderSettingsError,
+from ..mutation_pipeline import (
+    CoordinatedMutationError,
+    DocumentIndexingError,
+    DocumentMutationPipeline,
 )
 from ..pipeline import (
     DocumentProcessingPipeline,
@@ -73,11 +73,16 @@ from ..pipeline import (
     requested_expiry_year,
     requested_structured_field,
 )
+from ..settings import (
+    LocalReminderSettingsStore,
+    ReminderSettings,
+    ReminderSettingsError,
+)
 from .chat_memory import TemporaryChatMemory
 from .index_jobs import DocumentIndexJobService
 from .jobs import ProgressReporter, UploadJobService, UploadProcessor
 from .local_services import LocalServiceStartupError, LocalWebServiceManager
-from .pending import PendingDocumentService
+from .pending import PendingDocumentError, PendingDocumentService
 from .schemas import (
     ChatDocumentReference,
     ChatRequest,
@@ -220,15 +225,143 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
             resolved.vector_index,
             submit_index_update,
             mutation_lock,
+            resolved.processed_path,
         )
         if resolved.vector_index is not None
         else None
     )
+    insertion_lock = Lock()
+    insertion_stop = Event()
+
+    def complete_pending_insertion(pending_id: str) -> DocumentInsertResult:
+        """Resume a confirmed insertion from its durable local manifest."""
+        pending = pending_documents.get(pending_id)
+        if pending is None or pending.confirmation_document is None:
+            raise PendingDocumentError("The confirmed insertion is unavailable.")
+        if pending.cancelling:
+            raise PendingDocumentError("This insertion is being cancelled.")
+        if pending.archived_file_name is not None:
+            archived = resolved.processed_path / pending.archived_file_name
+            if pending.source_path.is_file():
+                # The archive move was interrupted before it started.
+                pass
+            elif archived.is_file():
+                with resolved.repository_factory() as repository:
+                    record = (
+                        repository.get_document_by_id(pending.insertion_document_id)
+                        if pending.insertion_document_id is not None
+                        else None
+                    )
+                if record is not None and record.source_file_name == archived.name:
+                    if resolved.vector_index is None:
+                        raise CoordinatedMutationError(
+                            "The local search index is unavailable."
+                        )
+                    with mutation_lock:
+                        resolved.vector_index.upsert_document(
+                            record.id,
+                            raw_text=pending.raw_text,
+                            document=record.document,
+                        )
+                        if not resolved.vector_index.get_document_fragments(record.id):
+                            raise CoordinatedMutationError(
+                                "The document is not indexed locally."
+                            )
+                        with resolved.repository_factory() as repository:
+                            committed = repository.mark_document_committed(record.id)
+                        if committed is None:
+                            raise CoordinatedMutationError(
+                                "The document could not be committed locally."
+                            )
+                        record = committed
+                    pending_documents.finish_archive(pending_id)
+                    jobs.discard_for_pending(pending_id)
+                    return DocumentInsertResult(record, False)
+                pending_documents.restore_archive(pending, archived)
+                pending = pending_documents.get(pending_id)
+                if pending is None:
+                    raise PendingDocumentError(
+                        "The confirmation source is unavailable."
+                    )
+        service = _require_mutation_service(mutations)
+        confirmation_document = pending.confirmation_document
+        if confirmation_document is None:
+            raise PendingDocumentError("The confirmed insertion is unavailable.")
+        try:
+            result = service.confirm(
+                confirmation_document,
+                file_hash=pending.file_hash
+                or calculate_file_sha256(pending.source_path),
+                raw_text=pending.raw_text,
+                sections=pending.sections,
+                finalize=(
+                    None
+                    if pending.is_manual
+                    else lambda: pending_documents.archive(pending.id)
+                ),
+                undo_finalize=(
+                    None
+                    if pending.is_manual
+                    else lambda archived: pending_documents.restore_archive(
+                        pending, archived
+                    )
+                ),
+                commit_finalize=(
+                    None
+                    if pending.is_manual
+                    else lambda: pending_documents.finish_archive(pending.id)
+                ),
+                record_insert=lambda document_id: pending_documents.record_insertion_id(
+                    pending.id, document_id
+                ),
+            )
+        except DocumentIndexingError as exc:
+            if not exc.unavailable and not pending.is_manual:
+                failures = pending_documents.record_index_failure(pending.id)
+                if failures >= 2:
+                    cancelling = pending_documents.mark_cancelling(pending.id)
+                    if cancelling.insertion_document_id is not None:
+                        service.cancel_insertion(cancelling.insertion_document_id)
+                    jobs.fail_pending_insertion(pending.id)
+                    pending_documents.reject(pending.id)
+            raise
+        if pending.is_manual:
+            pending_documents.reject(pending.id)
+        jobs.discard_for_pending(pending_id)
+        return result
+
+    def retry_pending_insertions() -> None:
+        """Retry interrupted or unavailable local stores until shutdown."""
+        while not insertion_stop.wait(5):
+            for item in pending_documents.list():
+                if (
+                    item.confirmation_document is None
+                    or item.cancelling
+                    or insertion_stop.is_set()
+                ):
+                    continue
+                with insertion_lock:
+                    try:
+                        complete_pending_insertion(item.id)
+                    except Exception as exc:
+                        _LOGGER.warning(
+                            "Pending insertion %s still needs a local store (%s).",
+                            item.id,
+                            type(exc).__name__,
+                        )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         """Stop workers promptly and release shared local connections."""
+        insertion_worker = Thread(
+            target=retry_pending_insertions,
+            name="smart-doc-insertion-retry",
+            daemon=True,
+        )
+        insertion_worker.start()
         yield
+        insertion_stop.set()
+        insertion_worker.join(timeout=1)
         jobs.close()
         if index_jobs is not None:
             index_jobs.close()
@@ -385,6 +518,8 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         today = resolved.today_provider()
         alert_days = default_reminder_days()
+        pending_ids = pending_documents.insertion_ids()
+        pending_hashes = pending_documents.insertion_hashes()
         return [
             DocumentResponse.from_record(
                 record,
@@ -392,6 +527,7 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
                 alert_days=alert_days,
             )
             for record in records
+            if record.id not in pending_ids and record.file_hash not in pending_hashes
         ]
 
     @app.post("/api/chat", response_model=ChatResponse)
@@ -403,6 +539,11 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
         question = request.question.strip()
         if not question:
             raise HTTPException(status_code=422, detail="The question cannot be empty.")
+        if pending_documents.insertion_ids():
+            raise HTTPException(
+                status_code=503,
+                detail="A document is still being inserted. Please try again shortly.",
+            )
         _LOGGER.info("Chat request accepted; document contents are not logged.")
         history = (
             chat_memory.history(request.conversation_id)
@@ -502,7 +643,7 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
     ) -> DocumentResponse:
         """Return one locally stored document."""
         record = repository.get_document_by_id(document_id)
-        if record is None:
+        if record is None or record.file_hash in pending_documents.insertion_hashes():
             raise HTTPException(status_code=404, detail="Document not found.")
         alert_days = default_reminder_days()
         return DocumentResponse.from_record(
@@ -519,7 +660,7 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
     ) -> FileResponse:
         """Open or download the original file from the local processed archive."""
         record = repository.get_document_by_id(document_id)
-        if record is None:
+        if record is None or record.file_hash in pending_documents.insertion_hashes():
             raise HTTPException(status_code=404, detail="Document not found.")
         if record.source_file_name is None:
             raise HTTPException(
@@ -548,7 +689,8 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
         repository: Repository,
     ) -> DocumentIndexedContentResponse:
         """Return every local Chroma content fragment for one stored document."""
-        if repository.get_document_by_id(document_id) is None:
+        record = repository.get_document_by_id(document_id)
+        if record is None or record.file_hash in pending_documents.insertion_hashes():
             raise HTTPException(status_code=404, detail="Document not found.")
         if resolved.vector_index is None:
             raise HTTPException(
@@ -574,6 +716,8 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
     ) -> DocumentUpdateResponse:
         """Store one document update and queue its local search refresh."""
         alert_days = default_reminder_days()
+        if document_id in pending_documents.insertion_ids():
+            raise HTTPException(status_code=404, detail="Document not found.")
         service = _require_mutation_service(mutations)
         try:
             updated = service.update(document_id, document)
@@ -594,13 +738,26 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
     def create_manual_document(document: DocumentData) -> DocumentResponse:
         """Validate, persist, and index a document entered entirely by the user."""
         alert_days = default_reminder_days()
-        service = _require_mutation_service(mutations)
         try:
-            result = service.create_manual(document)
+            document.ensure_complete_dynamic_values()
+            with insertion_lock:
+                pending = pending_documents.add_manual(document)
+                result = complete_pending_insertion(pending.id)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except CoordinatedMutationError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except (
+            CoordinatedMutationError,
+            DatabaseError,
+            PendingDocumentError,
+            VectorDatabaseError,
+        ) as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "There were problems inserting the document. "
+                    "Please try again later, or discard it from pending documents."
+                ),
+            ) from exc
         return DocumentResponse.from_record(
             result.record,
             today=resolved.today_provider(),
@@ -621,6 +778,8 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
     @app.delete("/api/documents/{document_id}", status_code=204)
     def delete_document(document_id: str) -> None:
         """Delete one document consistently from MongoDB and ChromaDB."""
+        if document_id in pending_documents.insertion_ids():
+            raise HTTPException(status_code=404, detail="Document not found.")
         service = _require_mutation_service(mutations)
         try:
             deleted = service.delete(document_id)
@@ -658,23 +817,36 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
     ) -> DocumentResponse:
         """Validate user edits before persistence, indexing, and archiving."""
         alert_days = default_reminder_days()
-        pending = pending_documents.get(pending_id)
-        if pending is None:
-            raise HTTPException(status_code=404, detail="Pending document not found.")
-        service = _require_mutation_service(mutations)
         try:
-            result = service.confirm(
-                document,
-                file_hash=calculate_file_sha256(pending.source_path),
-                raw_text=pending.raw_text,
-                sections=pending.sections,
-                finalize=lambda: pending_documents.archive(pending.id),
-            )
+            with insertion_lock:
+                pending = pending_documents.get(pending_id)
+                if pending is None:
+                    raise HTTPException(
+                        status_code=404, detail="Pending document not found."
+                    )
+                file_hash = pending.file_hash or calculate_file_sha256(
+                    pending.source_path
+                )
+                pending_documents.begin_insertion(
+                    pending_id, document, file_hash=file_hash
+                )
+                result = complete_pending_insertion(pending_id)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except (CoordinatedMutationError, FileHashingError) as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-        jobs.discard_for_pending(pending_id)
+        except (
+            CoordinatedMutationError,
+            DatabaseError,
+            FileHashingError,
+            PendingDocumentError,
+            VectorDatabaseError,
+        ) as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "There were problems inserting the document. "
+                    "Please try again later, or discard it."
+                ),
+            ) from exc
         return DocumentResponse.from_record(
             result.record,
             today=resolved.today_provider(),
@@ -684,9 +856,41 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
     @app.delete("/api/pending-documents/{pending_id}", status_code=204)
     def reject_pending_document(pending_id: str) -> None:
         """Reject and securely discard one staged upload."""
-        if not pending_documents.reject(pending_id):
-            raise HTTPException(status_code=404, detail="Pending document not found.")
-        jobs.discard_for_pending(pending_id)
+        with insertion_lock:
+            try:
+                pending = pending_documents.mark_cancelling(pending_id)
+            except PendingDocumentError as exc:
+                raise HTTPException(
+                    status_code=404, detail="Pending document not found."
+                ) from exc
+            except OSError as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail="The cancellation could not be recorded locally.",
+                ) from exc
+            try:
+                document_ids = set()
+                if pending.insertion_document_id is not None:
+                    document_ids.add(pending.insertion_document_id)
+                if pending.file_hash is not None:
+                    with resolved.repository_factory() as repository:
+                        partial = repository.get_document_by_file_hash(
+                            pending.file_hash
+                        )
+                    if partial is not None and partial.source_file_name is None:
+                        document_ids.add(partial.id)
+                for document_id in document_ids:
+                    _require_mutation_service(mutations).cancel_insertion(document_id)
+            except (DatabaseError, CoordinatedMutationError) as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+            try:
+                pending_documents.reject(pending_id)
+            except OSError as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail="The pending source could not be removed. Try again later.",
+                ) from exc
+            jobs.discard_for_pending(pending_id)
 
     @app.post(
         "/api/uploads",

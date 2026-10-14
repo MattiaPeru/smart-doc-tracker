@@ -136,6 +136,29 @@ class UploadJobService:
                 del self._jobs[matching_id]
                 self._manifest_path(matching_id).unlink(missing_ok=True)
 
+    def fail_pending_insertion(self, pending_id: str) -> None:
+        """Move a rejected index insertion to the OCR retry queue."""
+        pending = self._pending_documents.get(pending_id)
+        if pending is None or pending.is_manual or not pending.source_path.is_file():
+            raise ValueError("The original upload is unavailable for OCR retry.")
+        with self._lock:
+            stored = self._jobs.get(pending_id)
+            if stored is None:
+                raise ValueError("The original upload job is unavailable.")
+            shutil.copy2(pending.source_path, stored.source_path)
+            failed = replace(
+                stored,
+                job=replace(
+                    stored.job,
+                    status=UploadJobStatus.FAILED,
+                    updated_at=datetime.now(UTC),
+                    pending_id=pending_id,
+                    error="The document could not be indexed locally.",
+                ),
+            )
+            self._persist(failed)
+            self._jobs[pending_id] = failed
+
     def discard_failed(self, job_id: str) -> bool:
         """Remove one failed job and its owned local source file."""
         with self._lock:
@@ -157,6 +180,9 @@ class UploadJobService:
                 or not stored.source_path.is_file()
             ):
                 return False
+            pending = self._pending_documents.get(job_id)
+            if pending is not None and pending.cancelling:
+                self._pending_documents.reject(job_id)
             queued = replace(
                 stored,
                 job=replace(
@@ -253,6 +279,10 @@ class UploadJobService:
                     )
                     stored = replace(stored, job=job)
                     self._persist(stored)
+            if job.status is UploadJobStatus.FAILED and source_path.is_file():
+                pending = self._pending_documents.get(job.id)
+                if pending is not None and pending.cancelling:
+                    self._pending_documents.reject(job.id)
             self._jobs[job.id] = stored
         return resumable
 

@@ -74,7 +74,7 @@ function renderPending(items) {
     card.innerHTML = `<span class="status-bar pending"></span>
       <div><h3>${escapeHtml(item.document.document_type.replaceAll("_", " "))}</h3>
       <p>${escapeHtml(item.file_name)} · ${escapeHtml(item.document.summary)}</p></div>
-      <div class="expiry">Review fields</div>`;
+      <div class="expiry">${item.status === "cancelling" ? "Cancelling · Try again" : item.status === "inserting" ? "Inserting · Retry or discard" : "Review fields"}</div>`;
     const open = () => showEditor(item, "pending");
     card.addEventListener("click", open);
     card.addEventListener("keydown", (event) => { if (event.key === "Enter") open(); });
@@ -108,7 +108,7 @@ function renderQueue(items) {
     const position = item.status === "queued" ? `Position ${queuedPosition}` : "In progress";
     card.innerHTML = `<span class="status-bar ${failed ? "expired" : "queue"}"></span>
       <div><h3>${escapeHtml(item.file_name)}</h3>
-      <p>${escapeHtml(processingLabel(item.status))}</p></div>
+      <p>${escapeHtml(failed && item.error ? item.error : processingLabel(item.status))}</p></div>
       <div class="expiry">${failed
         ? `<div class="queue-card-actions"><button class="secondary compact retry-job" type="button">Retry</button><button class="danger-button compact discard-job" type="button">Remove</button></div>`
         : escapeHtml(position)}</div>`;
@@ -230,6 +230,19 @@ async function saveEditor(event, identifier, mode) {
       showMessage("Changes are saved. Refresh the page to see the latest information.");
     });
   } catch (error) {
+    if (mode === "pending") {
+      try {
+        const jobResponse = await apiFetch(`/api/jobs/${identifier}`);
+        if (jobResponse.ok && (await jobResponse.json()).status === "failed") {
+          reviewDialog.close();
+          await Promise.all([loadProcessingQueue(), loadPendingDocuments()]);
+          showMessage("Indexing failed. Retry the upload from the queue to run OCR again, or remove it.", true);
+          return;
+        }
+      } catch (_) {
+        // Preserve the original save error if the status refresh fails.
+      }
+    }
     const editorMessage = form.querySelector("#editor-message");
     editorMessage.textContent = userMessage(error, "We couldn't save the document. Please try again.");
     editorMessage.hidden = false;

@@ -10,6 +10,10 @@ from unittest import TestCase
 from fastapi.testclient import TestClient
 
 from smart_doc_tracker.db.database import DocumentInsertResult, StoredDocument
+from smart_doc_tracker.db.vector_database import (
+    VectorDatabaseError,
+    VectorDatabaseUnavailableError,
+)
 from smart_doc_tracker.infrastructure.ollama import OllamaConnectionError
 from smart_doc_tracker.models.document import DocumentData
 from smart_doc_tracker.models.rag import IndexedDocumentFragment, RetrievedDocumentChunk
@@ -57,6 +61,11 @@ class FakeRepository:
     def get_document_by_id(self, document_id: str) -> StoredDocument | None:
         return next((item for item in self.records if item.id == document_id), None)
 
+    def get_document_by_file_hash(self, file_hash: str) -> StoredDocument | None:
+        return next(
+            (item for item in self.records if item.file_hash == file_hash), None
+        )
+
     def search_by_dynamic_field(
         self, field_key: str, field_value: Any
     ) -> list[StoredDocument]:
@@ -80,7 +89,11 @@ class FakeRepository:
         document: DocumentData,
         *,
         file_hash: str,
+        insertion_pending: bool = False,
     ) -> DocumentInsertResult:
+        existing = self.get_document_by_file_hash(file_hash)
+        if existing is not None:
+            return DocumentInsertResult(record=existing, inserted=False)
         record = StoredDocument(
             id="confirmed",
             file_hash=file_hash,
@@ -89,6 +102,9 @@ class FakeRepository:
         )
         self.records.append(record)
         return DocumentInsertResult(record=record, inserted=True)
+
+    def mark_document_committed(self, document_id: str) -> StoredDocument | None:
+        return self.get_document_by_id(document_id)
 
     def upsert_document_sections(self, document_id: str, sections: Any) -> None:
         return None
@@ -138,9 +154,13 @@ class FakeRepository:
 
 class FakeVectorIndex:
     def __init__(self) -> None:
+        self.fail_upsert = False
+        self.index_error = False
+        self.fail_delete = False
         self.upserts: list[tuple[str, str, DocumentData]] = []
         self.updates: list[tuple[str, DocumentData]] = []
         self.deletes: list[str] = []
+        self.absent: set[str] = set()
         self.query_results: list[RetrievedDocumentChunk] = []
         self.queries: list[str] = []
 
@@ -151,7 +171,12 @@ class FakeVectorIndex:
         raw_text: str,
         document: DocumentData,
     ) -> None:
+        if self.fail_upsert:
+            raise VectorDatabaseUnavailableError("Local index unavailable")
+        if self.index_error:
+            raise VectorDatabaseError("Local index rejected the insertion")
         self.upserts.append((document_id, raw_text, document))
+        self.absent.discard(document_id)
 
     def snapshot_document(self, document_id: str) -> dict[str, Any]:
         return {"ids": []}
@@ -167,7 +192,10 @@ class FakeVectorIndex:
         self.updates.append((document_id, document))
 
     def delete_document(self, document_id: str) -> None:
+        if self.fail_delete:
+            raise RuntimeError("Local index unavailable")
         self.deletes.append(document_id)
+        self.absent.add(document_id)
 
     def query(
         self,
@@ -179,6 +207,8 @@ class FakeVectorIndex:
         return self.query_results[:limit]
 
     def get_document_fragments(self, document_id: str) -> list[IndexedDocumentFragment]:
+        if document_id in self.absent:
+            return []
         return [
             IndexedDocumentFragment(
                 f"{document_id}:raw:0001",
@@ -417,9 +447,7 @@ class WebApplicationTests(TestCase):
         }
         self.assertEqual(self.client.post("/api/chat", json=payload).status_code, 200)
 
-        cleared = self.client.delete(
-            "/api/chat/conversations/conversation-to-clear"
-        )
+        cleared = self.client.delete("/api/chat/conversations/conversation-to-clear")
         follow_up = self.client.post(
             "/api/chat",
             json={
@@ -634,18 +662,26 @@ class WebApplicationTests(TestCase):
             self.assertEqual(response.status_code, 202)
             job_ids.append(response.json()["id"])
         for _ in range(100):
-            if all(self.client.get(f"/api/jobs/{job_id}").json()["status"] == "failed" for job_id in job_ids):
+            if all(
+                self.client.get(f"/api/jobs/{job_id}").json()["status"] == "failed"
+                for job_id in job_ids
+            ):
                 break
             time.sleep(0.01)
         self.assertEqual(len(self.client.get("/api/jobs").json()), 2)
-        self.assertEqual(self.client.post(f"/api/jobs/{job_ids[0]}/retry").status_code, 200)
+        self.assertEqual(
+            self.client.post(f"/api/jobs/{job_ids[0]}/retry").status_code, 200
+        )
         for _ in range(100):
             if self.client.get(f"/api/jobs/{job_ids[0]}").json()["status"] == "failed":
                 break
             time.sleep(0.01)
         self.assertEqual(self.client.post("/api/jobs/retry-all").json(), {"retried": 2})
         for _ in range(100):
-            if all(self.client.get(f"/api/jobs/{job_id}").json()["status"] == "failed" for job_id in job_ids):
+            if all(
+                self.client.get(f"/api/jobs/{job_id}").json()["status"] == "failed"
+                for job_id in job_ids
+            ):
                 break
             time.sleep(0.01)
         self.assertEqual(self.client.delete("/api/jobs/failed").json(), {"removed": 2})
@@ -683,7 +719,7 @@ class WebApplicationTests(TestCase):
 
         self.assertIn("addGroupRow", dashboard_script)
         self.assertIn('id="add-group"', dashboard_script)
-        self.assertIn('addValueNode(container, key, {}, false)', editor_script)
+        self.assertIn("addValueNode(container, key, {}, false)", editor_script)
         self.assertIn('.nested-value").open = true', editor_script)
         self.assertIn(
             "addGroupButton.textContent = node.dataset.valueKind", editor_script
@@ -897,12 +933,133 @@ class WebApplicationTests(TestCase):
         self.assertTrue(
             (Path(self.temporary_directory.name) / "processed" / "policy.png").exists()
         )
-        original = self.client.get(
-            f"/api/documents/{confirmed.json()['id']}/original"
-        )
+        original = self.client.get(f"/api/documents/{confirmed.json()['id']}/original")
         self.assertEqual(original.status_code, 200)
         self.assertEqual(original.content, b"local fixture")
         self.assertEqual(self.vector_index.upserts[0][0], "confirmed")
+
+    def test_failed_confirmation_stays_pending_and_can_be_retried(self) -> None:
+        response = self.client.post(
+            "/api/uploads",
+            files={"file": ("retry.png", b"local fixture", "image/png")},
+            data={"language": "ita"},
+        )
+        job_id = response.json()["id"]
+        for _ in range(100):
+            job = self.client.get(f"/api/jobs/{job_id}").json()
+            if job["status"] == "awaiting_confirmation":
+                break
+            time.sleep(0.01)
+        pending_id = job["pending_id"]
+        payload = self.client.get(f"/api/pending-documents/{pending_id}").json()[
+            "document"
+        ]
+        self.vector_index.fail_upsert = True
+
+        failed = self.client.post(
+            f"/api/pending-documents/{pending_id}/confirm", json=payload
+        )
+
+        self.assertEqual(failed.status_code, 503)
+        self.assertIn("try again later", failed.json()["detail"])
+        self.assertEqual(
+            self.client.get(f"/api/pending-documents/{pending_id}").json()["status"],
+            "inserting",
+        )
+        self.assertIsNotNone(self.repository.get_document_by_id("confirmed"))
+        self.vector_index.fail_upsert = False
+
+        retried = self.client.post(
+            f"/api/pending-documents/{pending_id}/confirm", json=payload
+        )
+
+        self.assertEqual(retried.status_code, 200)
+        self.assertEqual(self.client.get("/api/pending-documents").json(), [])
+        self.assertIsNotNone(self.repository.get_document_by_id("confirmed"))
+
+    def test_failed_confirmation_recovers_automatically_when_index_returns(
+        self,
+    ) -> None:
+        response = self.client.post(
+            "/api/uploads",
+            files={"file": ("recover.png", b"local fixture", "image/png")},
+            data={"language": "ita"},
+        )
+        job_id = response.json()["id"]
+        for _ in range(100):
+            job = self.client.get(f"/api/jobs/{job_id}").json()
+            if job["status"] == "awaiting_confirmation":
+                break
+            time.sleep(0.01)
+        pending_id = job["pending_id"]
+        payload = self.client.get(f"/api/pending-documents/{pending_id}").json()[
+            "document"
+        ]
+        self.vector_index.fail_upsert = True
+        self.assertEqual(
+            self.client.post(
+                f"/api/pending-documents/{pending_id}/confirm", json=payload
+            ).status_code,
+            503,
+        )
+        self.vector_index.fail_upsert = False
+
+        for _ in range(125):
+            if not self.client.get("/api/pending-documents").json():
+                break
+            time.sleep(0.05)
+
+        self.assertEqual(self.client.get("/api/pending-documents").json(), [])
+        self.assertIsNotNone(self.repository.get_document_by_id("confirmed"))
+
+    def test_two_index_errors_move_upload_to_failed_ocr_queue(self) -> None:
+        response = self.client.post(
+            "/api/uploads",
+            files={"file": ("broken.png", b"local fixture", "image/png")},
+            data={"language": "ita"},
+        )
+        job_id = response.json()["id"]
+        for _ in range(100):
+            job = self.client.get(f"/api/jobs/{job_id}").json()
+            if job["status"] == "awaiting_confirmation":
+                break
+            time.sleep(0.01)
+        self.assertEqual(job["status"], "awaiting_confirmation")
+        payload = self.client.get(f"/api/pending-documents/{job_id}").json()[
+            "document"
+        ]
+        self.vector_index.index_error = True
+
+        for _ in range(2):
+            failed = self.client.post(
+                f"/api/pending-documents/{job_id}/confirm", json=payload
+            )
+            self.assertEqual(failed.status_code, 503)
+
+        self.assertIsNone(self.repository.get_document_by_id("confirmed"))
+        self.assertEqual(self.client.get("/api/pending-documents").json(), [])
+        self.assertEqual(
+            self.client.get(f"/api/jobs/{job_id}").json()["status"], "failed"
+        )
+        self.assertEqual(
+            (
+                Path(self.temporary_directory.name)
+                / "processing_queue"
+                / f"{job_id}.png"
+            ).read_bytes(),
+            b"local fixture",
+        )
+
+        self.vector_index.index_error = False
+        retried = self.client.post(f"/api/jobs/{job_id}/retry")
+        self.assertEqual(retried.status_code, 200)
+        for _ in range(100):
+            job = self.client.get(f"/api/jobs/{job_id}").json()
+            if job["status"] == "awaiting_confirmation":
+                break
+            time.sleep(0.01)
+        self.assertEqual(job["status"], "awaiting_confirmation")
+        self.assertEqual(len(self.processed_paths), 2)
 
     def test_creates_manual_document_without_upload_processing(self) -> None:
         payload = {
@@ -927,6 +1084,54 @@ class WebApplicationTests(TestCase):
             self.vector_index.upserts[-1][2].extracted_data, payload["extracted_data"]
         )
         self.assertRegex(self.records[-1].file_hash, r"^[0-9a-f]{64}$")
+
+    def test_failed_manual_insertion_can_be_cancelled(self) -> None:
+        payload = self.records[0].document.model_dump(mode="json")
+        self.vector_index.fail_upsert = True
+
+        failed = self.client.post("/api/documents/manual", json=payload)
+
+        self.assertEqual(failed.status_code, 503)
+        pending = self.client.get("/api/pending-documents").json()
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0]["status"], "inserting")
+        self.assertEqual(pending[0]["file_name"], "Manual document")
+
+        cancelled = self.client.delete(f"/api/pending-documents/{pending[0]['id']}")
+
+        self.assertEqual(cancelled.status_code, 204)
+        self.assertEqual(self.client.get("/api/pending-documents").json(), [])
+        self.assertIsNone(self.repository.get_document_by_id("confirmed"))
+
+    def test_cancellation_waits_until_both_stores_can_be_cleaned(self) -> None:
+        payload = self.records[0].document.model_dump(mode="json")
+        self.vector_index.fail_upsert = True
+        self.vector_index.fail_delete = True
+        self.assertEqual(
+            self.client.post("/api/documents/manual", json=payload).status_code,
+            503,
+        )
+        pending = self.client.get("/api/pending-documents").json()[0]
+        self.assertIsNotNone(self.repository.get_document_by_id("confirmed"))
+
+        rejected = self.client.delete(f"/api/pending-documents/{pending['id']}")
+
+        self.assertEqual(rejected.status_code, 503)
+        self.assertEqual(
+            self.client.get(f"/api/pending-documents/{pending['id']}").json()["status"],
+            "cancelling",
+        )
+        self.assertEqual(
+            self.client.get("/api/documents").json()[-1]["id"],
+            "none",
+        )
+        self.vector_index.fail_delete = False
+
+        self.assertEqual(
+            self.client.delete(f"/api/pending-documents/{pending['id']}").status_code,
+            204,
+        )
+        self.assertIsNone(self.repository.get_document_by_id("confirmed"))
 
     def test_dashboard_offers_manual_document_entry(self) -> None:
         dashboard = self.client.get("/")
@@ -958,6 +1163,9 @@ class WebApplicationTests(TestCase):
         self.assertEqual(deleted.status_code, 204)
         self.assertEqual(self.vector_index.deletes, ["soon"])
         self.assertIsNone(self.repository.get_document_by_id("soon"))
+        self.assertFalse(
+            (Path(self.temporary_directory.name) / "processed" / "policy.pdf").exists()
+        )
 
     def test_rejects_incomplete_container_placeholders_before_update(self) -> None:
         payload = self.records[1].document.model_dump(mode="json")

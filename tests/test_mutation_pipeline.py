@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 from unittest import TestCase
 
@@ -48,8 +49,11 @@ class FakeRepository:
         document: DocumentData,
         *,
         file_hash: str,
+        insertion_pending: bool = False,
     ) -> DocumentInsertResult:
         self.inserted_hashes.append(file_hash)
+        if self.record is not None and self.record.file_hash == file_hash:
+            return DocumentInsertResult(self.record, False)
         self.record = StoredDocument(
             id="doc-1",
             file_hash=file_hash,
@@ -57,6 +61,9 @@ class FakeRepository:
             created_at=datetime(2026, 8, 26, tzinfo=UTC),
         )
         return DocumentInsertResult(self.record, True)
+
+    def mark_document_committed(self, document_id: str) -> StoredDocument | None:
+        return self.get_document_by_id(document_id)
 
     def upsert_document_sections(self, document_id: str, sections: Any) -> None:
         return None
@@ -107,12 +114,14 @@ class FakeVectorIndex:
         self.restored: list[dict[str, Any]] = []
         self.deleted: list[str] = []
         self.upserts: list[tuple[str, str, DocumentData]] = []
+        self.present: set[str] = {"doc-1"}
 
     def snapshot_document(self, document_id: str) -> dict[str, Any]:
         return {"ids": [f"{document_id}:summary"]}
 
     def restore_document(self, snapshot: dict[str, Any]) -> None:
         self.restored.append(snapshot)
+        self.present.add("doc-1")
 
     def upsert_document(
         self,
@@ -124,6 +133,7 @@ class FakeVectorIndex:
         if self.fail_upsert:
             raise RuntimeError("Local index failed")
         self.upserts.append((document_id, raw_text, document))
+        self.present.add(document_id)
 
     def update_document_data(
         self,
@@ -135,6 +145,10 @@ class FakeVectorIndex:
 
     def delete_document(self, document_id: str) -> None:
         self.deleted.append(document_id)
+        self.present.discard(document_id)
+
+    def get_document_fragments(self, document_id: str) -> list[str]:
+        return ["fragment"] if document_id in self.present else []
 
 
 class DocumentMutationPipelineTests(TestCase):
@@ -195,6 +209,18 @@ class DocumentMutationPipelineTests(TestCase):
 
         self.assertEqual(result.record.source_file_name, "identity-card.pdf")
 
+    def test_finishes_an_existing_partial_mongo_insertion(self) -> None:
+        result = self.pipeline.confirm(
+            _document("Original"),
+            file_hash="a" * 64,
+            raw_text="Local source text",
+            finalize=lambda: Path("data/processed/recovered.pdf"),
+        )
+
+        self.assertFalse(result.inserted)
+        self.assertEqual(result.record.source_file_name, "recovered.pdf")
+        self.assertEqual(self.vector.upserts[-1][0], "doc-1")
+
     def test_restores_vector_snapshot_when_mongo_delete_fails(self) -> None:
         self.repository.fail_delete = True
 
@@ -203,6 +229,34 @@ class DocumentMutationPipelineTests(TestCase):
 
         self.assertIsNotNone(self.repository.record)
         self.assertEqual(self.vector.restored, [{"ids": ["doc-1:summary"]}])
+
+    def test_delete_removes_archived_source(self) -> None:
+        with TemporaryDirectory() as temporary:
+            self.pipeline.processed_path = Path(temporary)
+            source = Path(temporary) / "original.pdf"
+            source.write_bytes(b"local source")
+            assert self.repository.record is not None
+            self.repository.set_source_file_name("doc-1", source.name)
+
+            self.pipeline.delete("doc-1")
+
+            self.assertFalse(source.exists())
+            self.assertIsNone(self.repository.record)
+            self.assertEqual(self.vector.get_document_fragments("doc-1"), [])
+
+    def test_failed_delete_restores_archived_source(self) -> None:
+        with TemporaryDirectory() as temporary:
+            self.pipeline.processed_path = Path(temporary)
+            source = Path(temporary) / "original.pdf"
+            source.write_bytes(b"local source")
+            self.repository.set_source_file_name("doc-1", source.name)
+            self.repository.fail_delete = True
+
+            with self.assertRaises(CoordinatedMutationError):
+                self.pipeline.delete("doc-1")
+
+            self.assertEqual(source.read_bytes(), b"local source")
+            self.assertIsNotNone(self.repository.record)
 
     def test_removes_partial_insert_when_vector_indexing_fails(self) -> None:
         self.repository.record = None

@@ -143,6 +143,29 @@ class MongoDocumentRepositoryTests(TestCase):
         self.assertEqual(self.repository.get_all_documents(), [inserted.record])
         self.assertIsNone(self.repository.get_document_by_id("not-an-object-id"))
 
+    def test_insertion_remains_hidden_until_both_stores_commit(self) -> None:
+        inserted = self.repository.insert_document(
+            _document(),
+            file_hash=self.file_hash,
+            created_at=self.created_at,
+            insertion_pending=True,
+        )
+
+        self.assertEqual(self.repository.get_all_documents(), [])
+        self.assertEqual(
+            self.repository.get_expiring_documents(2, today=date(2030, 1, 8)),
+            [],
+        )
+        self.assertEqual(
+            self.repository.get_document_by_file_hash(self.file_hash),
+            inserted.record,
+        )
+
+        committed = self.repository.mark_document_committed(inserted.record.id)
+
+        self.assertEqual(committed, inserted.record)
+        self.assertEqual(self.repository.get_all_documents(), [inserted.record])
+
     def test_deletes_document_and_its_structured_sections(self) -> None:
         inserted = self.repository.insert_document(
             _document(), file_hash=self.file_hash, created_at=self.created_at

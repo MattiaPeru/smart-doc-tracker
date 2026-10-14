@@ -22,6 +22,10 @@ class VectorDatabaseError(RuntimeError):
     """Raised when the local vector index cannot complete an operation."""
 
 
+class VectorDatabaseUnavailableError(VectorDatabaseError):
+    """Raised when the local Chroma service cannot be reached."""
+
+
 class VectorDatabaseDependencyError(VectorDatabaseError):
     """Raised when Chroma is not installed in the local environment."""
 
@@ -55,22 +59,58 @@ class ChromaDocumentVectorIndex:
             raise ValueError("collection_name cannot be empty")
         host, port = _validate_loopback_url(base_url)
         factory = client_factory or _http_client
+        self._host = host
+        self._port = port
+        self._client_factory = factory
+        self._collection_name = collection_name
+        self._client: Any | None = None
+        self._collection_instance: Any | None = None
         try:
-            client = factory(host, port)
-            self._collection = client.get_or_create_collection(
-                name=collection_name,
-                metadata={"hnsw:space": "cosine"},
-                embedding_function=None,
-            )
-        except VectorDatabaseError:
-            raise
-        except Exception as exc:
-            raise VectorDatabaseError(
-                "The local vector database could not be opened."
-            ) from exc
+            self._connect()
+        except VectorDatabaseUnavailableError:
+            # Keep the web server running while the local service is stopped.
+            pass
         self._embedding_generator = embedding_generator
         self._chunk_characters = chunk_characters
         self._chunk_overlap = chunk_overlap
+
+    def _connect(self) -> None:
+        """Open or reopen the local collection when Chroma becomes available."""
+        try:
+            client = self._client_factory(self._host, self._port)
+            collection = client.get_or_create_collection(
+                name=self._collection_name,
+                metadata={"hnsw:space": "cosine"},
+                embedding_function=None,
+            )
+        except Exception as exc:
+            raise VectorDatabaseUnavailableError(
+                "The local vector database is unavailable."
+            ) from exc
+        self._client = client
+        self._collection_instance = collection
+
+    @property
+    def _collection(self) -> Any:
+        """Return the connected collection or raise a retryable service error."""
+        if self._collection_instance is None:
+            self._connect()
+        return self._collection_instance
+
+    def _operation_error(self, exc: Exception) -> VectorDatabaseError:
+        """Classify a failed operation by probing the local Chroma service."""
+        client = self._client
+        try:
+            if client is None:
+                self._connect()
+            elif hasattr(client, "heartbeat"):
+                client.heartbeat()
+        except Exception:
+            self._collection_instance = None
+            return VectorDatabaseUnavailableError(
+                "The local vector database is unavailable."
+            )
+        return VectorDatabaseError("The local vector operation failed.")
 
     def upsert_document(
         self,
@@ -110,10 +150,10 @@ class ChromaDocumentVectorIndex:
             stale_ids = sorted(existing_ids.difference(ids))
             if stale_ids:
                 self._collection.delete(ids=stale_ids)
+        except VectorDatabaseUnavailableError:
+            raise
         except Exception as exc:
-            raise VectorDatabaseError(
-                "The document could not be indexed locally."
-            ) from exc
+            raise self._operation_error(exc) from exc
 
     def snapshot_document(self, document_id: str) -> dict[str, Any]:
         """Capture all fragments needed for compensating local index operations."""
@@ -191,10 +231,10 @@ class ChromaDocumentVectorIndex:
             raise ValueError("document_id cannot be empty")
         try:
             self._collection.delete(where={"document_id": document_id})
+        except VectorDatabaseUnavailableError:
+            raise
         except Exception as exc:
-            raise VectorDatabaseError(
-                "The document index could not be deleted locally."
-            ) from exc
+            raise self._operation_error(exc) from exc
 
     def query(self, question: str, *, limit: int = 5) -> list[RetrievedDocumentChunk]:
         """Retrieve nearest document fragments using a locally embedded question."""
@@ -234,10 +274,10 @@ class ChromaDocumentVectorIndex:
                 where={"document_id": document_id},
                 include=["documents", "metadatas"],
             )
+        except VectorDatabaseUnavailableError:
+            raise
         except Exception as exc:
-            raise VectorDatabaseError(
-                "The indexed document content could not be read locally."
-            ) from exc
+            raise self._operation_error(exc) from exc
         return _decode_document_fragments(result)
 
     def _fragments(

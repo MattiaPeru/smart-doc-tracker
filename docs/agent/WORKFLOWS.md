@@ -23,15 +23,19 @@ stays in place; a successful one is archived under the processed folder.
 ```text
 controller or web route
   -> DocumentMutationPipeline
-  -> snapshot repository and vector state
-  -> update or delete repository record
-  -> update or delete indexed fragments
-  -> compensate from snapshots when a later operation fails
+  -> verify MongoDB and ChromaDB after insertion or deletion
+  -> retain a durable pending insertion until both stores and its source link commit
+  -> retry incomplete confirmations when local services recover
+  -> remove or restore the archived source during deletion
 ```
 
-MongoDB and ChromaDB do not provide a shared transaction. Keep snapshot,
-compensation, and operator-visible failure behavior together in the mutation
-pipeline.
+MongoDB and ChromaDB do not provide a shared transaction. The web confirmation
+manifest tracks partial inserts across restarts and keeps them out of the completed
+document list. A stopped Chroma service leaves the MongoDB record pending for
+automatic retry. Two insertion errors while Chroma remains reachable cause both
+store entries to be cleaned and the original upload to move to the failed upload
+queue. Retrying that job starts again with OCR. Keep snapshot, compensation, and
+operator-visible failure behavior in the mutation pipeline.
 
 ## Document questions
 
@@ -72,8 +76,11 @@ or the dynamic extracted payload.
 ```text
 queued -> extracting -> parsing -> awaiting_confirmation -> confirmed
                                           |                    |
-                                          -> rejected          -> indexed
-Any active state may become failed with a sanitized public reason.
+                                          -> rejected          -> inserting -> indexed
+Any active state may become failed with a sanitized public reason. A confirmed
+document remains in insertion until MongoDB and ChromaDB are both verified; the
+server retries incomplete insertions periodically. Repeated reachable index errors
+move the source to the failed processing queue for an explicit OCR retry or removal.
 ```
 
 Job manifests exclude OCR text. Pending-confirmation data is sensitive and remains

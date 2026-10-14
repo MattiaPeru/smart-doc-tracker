@@ -5,6 +5,7 @@ from unittest import TestCase
 from smart_doc_tracker.db.vector_database import (
     ChromaDocumentVectorIndex,
     VectorDatabaseConfigurationError,
+    VectorDatabaseUnavailableError,
     collection_name_for_embedding_model,
 )
 from smart_doc_tracker.models.document import DocumentData
@@ -81,6 +82,42 @@ def _document() -> DocumentData:
 
 
 class ChromaDocumentVectorIndexTests(TestCase):
+    def test_reconnects_after_local_chroma_starts(self) -> None:
+        collection = FakeCollection()
+        available = False
+
+        def create_client(_host: str, _port: int) -> FakeClient:
+            if not available:
+                raise OSError("Local service stopped")
+            return FakeClient(collection)
+
+        index = ChromaDocumentVectorIndex(
+            embedding_generator=FakeEmbeddingGenerator(),
+            client_factory=create_client,
+        )
+        with self.assertRaises(VectorDatabaseUnavailableError):
+            index.upsert_document("doc-1", raw_text="Local text", document=_document())
+
+        available = True
+        index.upsert_document("doc-1", raw_text="Local text", document=_document())
+        self.assertTrue(collection.upsert_payload["ids"])
+
+    def test_classifies_a_stopped_service_after_connection(self) -> None:
+        class StoppedCollection(FakeCollection):
+            def get(self, **payload: object) -> dict[str, object]:
+                raise OSError("Connection refused")
+
+        class StoppedClient(FakeClient):
+            def heartbeat(self) -> None:
+                raise OSError("Connection refused")
+
+        index = ChromaDocumentVectorIndex(
+            embedding_generator=FakeEmbeddingGenerator(),
+            client_factory=lambda _host, _port: StoppedClient(StoppedCollection()),
+        )
+        with self.assertRaises(VectorDatabaseUnavailableError):
+            index.upsert_document("doc-1", raw_text="Local text", document=_document())
+
     def test_indexes_raw_summary_and_structured_data_with_explicit_embeddings(
         self,
     ) -> None:

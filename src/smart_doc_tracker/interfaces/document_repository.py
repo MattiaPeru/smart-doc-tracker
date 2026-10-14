@@ -26,8 +26,13 @@ class DocumentRepository(Protocol):
         document: DocumentData,
         *,
         file_hash: str,
+        insertion_pending: bool = False,
     ) -> DocumentInsertResult:
         """Persist one validated document using its content hash."""
+        ...
+
+    def mark_document_committed(self, document_id: str) -> StoredDocument | None:
+        """Expose a verified record to ordinary document queries."""
         ...
 
     def upsert_document_sections(
@@ -44,6 +49,10 @@ class DocumentRepository(Protocol):
 
     def get_document_by_id(self, document_id: str) -> StoredDocument | None:
         """Return one stored document by identifier when present."""
+        ...
+
+    def get_document_by_file_hash(self, file_hash: str) -> StoredDocument | None:
+        """Return one document by source hash when present."""
         ...
 
     def update_document(

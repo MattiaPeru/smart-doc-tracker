@@ -144,6 +144,7 @@ class MongoDocumentRepository:
         *,
         file_hash: str,
         created_at: datetime | None = None,
+        insertion_pending: bool = False,
     ) -> DocumentInsertResult:
         """Insert once by file hash and return the existing record on retries."""
         normalized_hash = _validate_file_hash(file_hash)
@@ -153,6 +154,7 @@ class MongoDocumentRepository:
         payload["issue_date"] = _date_to_datetime(document.issue_date)
         payload["file_hash"] = normalized_hash
         payload["created_at"] = timestamp
+        payload["insertion_pending"] = insertion_pending
 
         try:
             try:
@@ -173,6 +175,22 @@ class MongoDocumentRepository:
         return DocumentInsertResult(
             record=_to_stored_document(stored), inserted=inserted
         )
+
+    def mark_document_committed(self, document_id: str) -> StoredDocument | None:
+        """Make a verified insertion visible to ordinary local queries."""
+        if not ObjectId.is_valid(document_id):
+            return None
+        identifier = ObjectId(document_id)
+        try:
+            self._collection.update_one(
+                {"_id": identifier}, {"$set": {"insertion_pending": False}}
+            )
+            payload = self._collection.find_one({"_id": identifier})
+        except PyMongoError as exc:
+            raise DatabaseError("The document could not be committed locally.") from exc
+        if payload is None or payload.get("insertion_pending") is True:
+            raise DatabaseError("The document remains pending locally.")
+        return _to_stored_document(payload)
 
     def upsert_document_sections(
         self,
@@ -228,13 +246,26 @@ class MongoDocumentRepository:
             raise DatabaseError("The document could not be read locally.") from exc
         return _to_stored_document(payload) if payload is not None else None
 
+    def get_document_by_file_hash(self, file_hash: str) -> StoredDocument | None:
+        """Find a stored record by its validated local source hash."""
+        normalized_hash = _validate_file_hash(file_hash)
+        try:
+            payload = self._collection.find_one({"file_hash": normalized_hash})
+        except PyMongoError as exc:
+            raise DatabaseError("The document could not be read locally.") from exc
+        return _to_stored_document(payload) if payload is not None else None
+
     def get_all_documents(self) -> list[StoredDocument]:
         """Return every stored document in deterministic creation order."""
         try:
             cursor = self._collection.find({}).sort(
                 [("created_at", ASCENDING), ("_id", ASCENDING)]
             )
-            return [_to_stored_document(payload) for payload in cursor]
+            return [
+                _to_stored_document(payload)
+                for payload in cursor
+                if payload.get("insertion_pending") is not True
+            ]
         except PyMongoError as exc:
             raise DatabaseError("Documents could not be read locally.") from exc
 
@@ -335,7 +366,11 @@ class MongoDocumentRepository:
             cursor = self._collection.find(query).sort(
                 [("created_at", ASCENDING), ("_id", ASCENDING)]
             )
-            return [_to_stored_document(payload) for payload in cursor]
+            return [
+                _to_stored_document(payload)
+                for payload in cursor
+                if payload.get("insertion_pending") is not True
+            ]
         except PyMongoError as exc:
             raise DatabaseError("Documents could not be queried locally.") from exc
 

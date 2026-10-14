@@ -317,3 +317,37 @@ class PersistentUploadJobTests(TestCase):
                 self.assertTrue(item.source_path.exists())
             finally:
                 restored.close()
+
+    def test_restores_insertion_and_moved_source_after_restart(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "upload.png"
+            source.write_bytes(b"local fixture")
+            first = PendingDocumentService(root / "processed")
+            added = first.add(
+                source,
+                file_name="invoice.png",
+                raw_text="Private local text",
+                document=_document(),
+            )
+            first.begin_insertion(added.id, _document(), file_hash="a" * 64)
+            first.record_insertion_id(added.id, "document-1")
+            self.assertEqual(first.record_index_failure(added.id), 1)
+            archived = first.archive(added.id)
+            first.close()
+
+            restored = PendingDocumentService(root / "processed")
+            item = restored.get(added.id)
+            self.assertIsNotNone(item)
+            assert item is not None
+            self.assertEqual(item.file_hash, "a" * 64)
+            self.assertEqual(item.insertion_document_id, "document-1")
+            self.assertEqual(item.index_failures, 1)
+            self.assertEqual(item.archived_file_name, "invoice.png")
+            self.assertTrue(archived.exists())
+
+            restored.restore_archive(item, archived)
+            self.assertTrue(item.source_path.exists())
+            self.assertFalse(archived.exists())
+            self.assertIsNone(restored.get(added.id).archived_file_name)
+            restored.close()

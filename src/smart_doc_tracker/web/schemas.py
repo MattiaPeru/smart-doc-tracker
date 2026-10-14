@@ -187,6 +187,7 @@ class PendingDocumentResponse(BaseModel):
     file_name: str
     document: DocumentData
     created_at: datetime
+    status: str = "awaiting_confirmation"
 
     @classmethod
     def from_pending(cls, pending: PendingDocument) -> PendingDocumentResponse:
@@ -194,8 +195,15 @@ class PendingDocumentResponse(BaseModel):
         return cls(
             id=pending.id,
             file_name=pending.file_name,
-            document=pending.document,
+            document=pending.confirmation_document or pending.document,
             created_at=pending.created_at,
+            status=(
+                "cancelling"
+                if pending.cancelling
+                else "inserting"
+                if pending.confirmation_document is not None
+                else "awaiting_confirmation"
+            ),
         )
 
 
