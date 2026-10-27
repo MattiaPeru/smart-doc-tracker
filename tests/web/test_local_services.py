@@ -176,3 +176,25 @@ class LocalWebServiceManagerTests(TestCase):
 
         manager.start.assert_called_once_with()
         manager.stop.assert_called_once_with()
+
+    @patch("smart_doc_tracker.web.app.LocalWebServiceManager")
+    @patch("uvicorn.run")
+    def test_chat_debug_flag_is_scoped_to_the_server_run(
+        self,
+        run_server: Mock,
+        _manager_type: Mock,
+    ) -> None:
+        import os
+
+        from smart_doc_tracker.web.app import run
+
+        previous = os.environ.pop("SMART_DOC_TRACKER_CHAT_DEBUG", None)
+        try:
+            run_server.side_effect = lambda *_args, **_kwargs: self.assertEqual(
+                os.environ.get("SMART_DOC_TRACKER_CHAT_DEBUG"), "1"
+            )
+            run(["--chat-debug"])
+            self.assertNotIn("SMART_DOC_TRACKER_CHAT_DEBUG", os.environ)
+        finally:
+            if previous is not None:
+                os.environ["SMART_DOC_TRACKER_CHAT_DEBUG"] = previous

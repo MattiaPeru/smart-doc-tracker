@@ -244,6 +244,7 @@ def default_web_dependencies() -> WebDependencies:
 def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
     """Create a testable local dashboard with injected application services."""
     resolved = dependencies or default_web_dependencies()
+    chat_debug = os.environ.get("SMART_DOC_TRACKER_CHAT_DEBUG") == "1"
     chat_memory = resolved.chat_memory or TemporaryChatMemory()
     chat_cancellation = _ChatCancellation(chat_memory)
     data_path = resolved.processed_path.parent
@@ -605,14 +606,65 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
         with chat_cancellation.track(
             request.request_id, request.conversation_id
         ) as cancelled:
+            trace_id = request.request_id or secrets.token_hex(8)
+
+            def trace(stage: str, details: dict[str, object]) -> None:
+                """Write an opt-in, request-scoped trace to the local terminal."""
+                if stage in {"semantic_results", "selected_context"}:
+                    fragments = details.get("fragments", [])
+                    if isinstance(fragments, list):
+                        for fragment in fragments:
+                            if not isinstance(fragment, dict):
+                                continue
+                            document_id = fragment.get("document_id")
+                            if isinstance(document_id, str):
+                                try:
+                                    record = repository.get_document_by_id(document_id)
+                                except DatabaseError:
+                                    record = None
+                                fragment["file_name"] = (
+                                    record.source_file_name if record else None
+                                )
+                _LOGGER.info(
+                    "Chat trace [%s] %s\n%s",
+                    trace_id,
+                    stage,
+                    json.dumps(details, ensure_ascii=False, indent=2, default=str),
+                )
+
             if cancelled.is_set():
+                if chat_debug:
+                    trace(
+                        "cancelled", {"message": "Request cancelled before processing."}
+                    )
                 raise HTTPException(status_code=409, detail="Chat request cancelled.")
-            _LOGGER.info("Chat request accepted; document contents are not logged.")
+            if chat_debug:
+                _LOGGER.info(
+                    "Chat request accepted with local terminal tracing enabled."
+                )
+            else:
+                _LOGGER.info("Chat request accepted; document contents are not logged.")
             history = (
                 chat_memory.history(request.conversation_id)
                 if request.conversation_id is not None
                 else ()
             )
+            if chat_debug:
+                trace(
+                    "request",
+                    {
+                        "question": question,
+                        "conversation_id": request.conversation_id,
+                        "history": [
+                            {
+                                "question": turn.question,
+                                "answer": turn.answer,
+                                "document_ids": list(turn.document_ids),
+                            }
+                            for turn in history
+                        ],
+                    },
+                )
             try:
                 _LOGGER.info("Chat request is using semantic retrieval and Ollama.")
                 if resolved.vector_index is None or resolved.rag_generator is None:
@@ -623,6 +675,7 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
                 answer = DocumentQuestionPipeline(
                     resolved.vector_index,
                     resolved.rag_generator,
+                    trace=trace if chat_debug else None,
                 ).ask(question, history=history)
             except (
                 DocumentParsingError,
@@ -632,11 +685,20 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
                 VectorDatabaseError,
             ) as exc:
                 _LOGGER.error("Chat request failed with %s.", type(exc).__name__)
+                if chat_debug:
+                    trace(
+                        "error",
+                        {"error_type": type(exc).__name__, "message": str(exc)},
+                    )
                 raise HTTPException(
                     status_code=503,
                     detail=_chat_error_detail(exc),
                 ) from exc
             if cancelled.is_set():
+                if chat_debug:
+                    trace(
+                        "cancelled", {"message": "Request cancelled after generation."}
+                    )
                 raise HTTPException(status_code=409, detail="Chat request cancelled.")
 
             documents: list[ChatDocumentReference] = []
@@ -648,6 +710,14 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
                 "Chat request completed successfully (%s supporting documents).",
                 len(documents),
             )
+            if chat_debug:
+                trace(
+                    "completed",
+                    {
+                        "answer": answer.answer,
+                        "files": [item.model_dump() for item in documents],
+                    },
+                )
             if request.conversation_id is not None:
                 chat_cancellation.remember(
                     request.conversation_id,
@@ -1151,14 +1221,27 @@ def run(argv: Sequence[str] | None = None) -> None:
         action="store_true",
         help="Show one terminal line for every HTTP request.",
     )
+    parser.add_argument(
+        "--chat-debug",
+        action="store_true",
+        help=(
+            "Show chat retrieval, document excerpts, prompts, model output, "
+            "and errors in the terminal."
+        ),
+    )
     arguments = parser.parse_args(argv)
     if not 1 <= arguments.port <= 65_535:
         parser.error("--port must be between 1 and 65535")
-    _configure_application_logging(arguments.log_level)
+    _configure_application_logging(
+        "info" if arguments.chat_debug else arguments.log_level
+    )
     import uvicorn
 
     services = LocalWebServiceManager()
+    previous_chat_debug = os.environ.get("SMART_DOC_TRACKER_CHAT_DEBUG")
     try:
+        if arguments.chat_debug:
+            os.environ["SMART_DOC_TRACKER_CHAT_DEBUG"] = "1"
         services.start()
         uvicorn.run(
             "smart_doc_tracker.web.app:create_app",
@@ -1173,6 +1256,11 @@ def run(argv: Sequence[str] | None = None) -> None:
         parser.exit(status=1, message=f"error: {exc}\n")
     finally:
         services.stop()
+        if arguments.chat_debug:
+            if previous_chat_debug is None:
+                os.environ.pop("SMART_DOC_TRACKER_CHAT_DEBUG", None)
+            else:
+                os.environ["SMART_DOC_TRACKER_CHAT_DEBUG"] = previous_chat_debug
 
 
 def _configure_application_logging(level: str) -> None:

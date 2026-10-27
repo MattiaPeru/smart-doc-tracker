@@ -132,6 +132,19 @@ smart-doc-tracker-web --log-level error
 smart-doc-tracker-web --access-log
 ```
 
+To inspect one chat request from retrieval through the final answer, start the server
+with `--chat-debug`:
+
+```powershell
+smart-doc-tracker-web --chat-debug
+```
+
+The terminal trace groups events by request ID and includes the retrieval query,
+matched file names and document fragments, the exact system and user prompts,
+each raw Ollama response, validation failures, and the final answer or error.
+The trace may contain private document text. Keep terminal output local and turn
+this option off after debugging; normal server logs do not include document text.
+
 Dashboard edits update MongoDB immediately and queue a durable refresh of the summary
 and structured-data fragments in ChromaDB. Dashboard deletion removes MongoDB metadata
 and PDF sections plus the active ChromaDB collection's fragments, but deliberately

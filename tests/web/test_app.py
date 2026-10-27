@@ -7,6 +7,7 @@ from tempfile import TemporaryDirectory
 from threading import Event, Thread
 from typing import Any
 from unittest import TestCase
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -400,6 +401,81 @@ class WebApplicationTests(TestCase):
         self.assertIn("local generation started", log_output)
         self.assertNotIn("insurance policy indicate", log_output)
 
+    def test_chat_debug_traces_files_prompts_and_model_output(self) -> None:
+        self.repository.records[0] = _record(
+            "expired", expiry_date="2026-08-25", source_file_name="policy.pdf"
+        )
+        with patch.dict("os.environ", {"SMART_DOC_TRACKER_CHAT_DEBUG": "1"}):
+            debug_app = create_app(
+                WebDependencies(
+                    repository_factory=lambda: self.repository,
+                    upload_processor=lambda *_args: DocumentProcessingResult(
+                        raw_text=""
+                    ),
+                    vector_index=self.vector_index,
+                    rag_generator=self.generator,
+                    processed_path=Path(self.temporary_directory.name)
+                    / "debug"
+                    / "processed",
+                )
+            )
+        with TestClient(
+            debug_app,
+            base_url="http://127.0.0.1:8080",
+            headers={"X-Smart-Doc-CSRF": debug_app.state.csrf_token},
+        ) as client:
+            with self.assertLogs("smart_doc_tracker.web.app", level="INFO") as captured:
+                response = client.post(
+                    "/api/chat", json={"question": "Private question"}
+                )
+
+        self.assertEqual(response.status_code, 200)
+        output = "\n".join(captured.output)
+        for expected in (
+            "retrieval_query",
+            "semantic_results",
+            "selected_context",
+            "policy.pdf",
+            "generation_request",
+            "Retrieved evidence passages",
+            "generation_response",
+            "validated_answer",
+            "completed",
+            "Private question",
+        ):
+            self.assertIn(expected, output)
+
+    def test_chat_debug_traces_generation_error(self) -> None:
+        with patch.dict("os.environ", {"SMART_DOC_TRACKER_CHAT_DEBUG": "1"}):
+            debug_app = create_app(
+                WebDependencies(
+                    repository_factory=lambda: self.repository,
+                    upload_processor=lambda *_args: DocumentProcessingResult(
+                        raw_text=""
+                    ),
+                    vector_index=self.vector_index,
+                    rag_generator=UnavailableGenerator(),
+                    processed_path=Path(self.temporary_directory.name)
+                    / "error-debug"
+                    / "processed",
+                )
+            )
+        with TestClient(
+            debug_app,
+            base_url="http://127.0.0.1:8080",
+            headers={"X-Smart-Doc-CSRF": debug_app.state.csrf_token},
+        ) as client:
+            with self.assertLogs("smart_doc_tracker.web.app", level="INFO") as captured:
+                response = client.post(
+                    "/api/chat", json={"question": "Private question"}
+                )
+
+        self.assertEqual(response.status_code, 503)
+        output = "\n".join(captured.output)
+        self.assertIn("generation_request", output)
+        self.assertIn("OllamaConnectionError", output)
+        self.assertIn("The local Ollama service is unavailable.", output)
+
     def test_chat_remembers_only_questions_from_the_same_temporary_conversation(
         self,
     ) -> None:
@@ -648,7 +724,7 @@ class WebApplicationTests(TestCase):
         self.assertIn("openChatDocument", script.text)
         self.assertIn("showDetail(await response.json())", script.text)
         self.assertNotIn("window.open(", script.text)
-        self.assertIn('>Open original</a>', script.text)
+        self.assertIn(">Open original</a>", script.text)
         self.assertIn("documents.forEach((sourceDocument)", script.text)
         self.assertIn("window.document.createElement", script.text)
         self.assertNotIn("documents.forEach((document)", script.text)
@@ -1161,9 +1237,7 @@ class WebApplicationTests(TestCase):
                 break
             time.sleep(0.01)
         self.assertEqual(job["status"], "awaiting_confirmation")
-        payload = self.client.get(f"/api/pending-documents/{job_id}").json()[
-            "document"
-        ]
+        payload = self.client.get(f"/api/pending-documents/{job_id}").json()["document"]
         self.vector_index.index_error = True
 
         for _ in range(2):

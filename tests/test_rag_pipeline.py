@@ -254,10 +254,13 @@ class DocumentQuestionPipelineTests(TestCase):
                 )
             ]
         )
+        events: list[tuple[str, dict[str, object]]] = []
 
-        answer = DocumentQuestionPipeline(index, generator).ask(
-            "What is the specialty?"
-        )
+        answer = DocumentQuestionPipeline(
+            index,
+            generator,
+            trace=lambda stage, details: events.append((stage, details)),
+        ).ask("What is the specialty?")
 
         self.assertEqual(answer.claims[0].evidence[0].quote, "Python Backend Developer")
         self.assertEqual(len(generator.calls), 2)
@@ -270,6 +273,18 @@ class DocumentQuestionPipelineTests(TestCase):
             retry_prompt,
         )
         self.assertIn("select only evidence_ids", retry_prompt)
+        self.assertEqual(
+            [stage for stage, _details in events].count("validation_failed"), 1
+        )
+        self.assertEqual(
+            [
+                details["attempt"]
+                for stage, details in events
+                if stage == "generation_request"
+            ],
+            [1, 2],
+        )
+        self.assertEqual(events[-1][0], "validated_answer")
 
     def test_materializes_exact_evidence_from_generated_passage_ids(self) -> None:
         generator = FakeGenerator(
@@ -480,7 +495,9 @@ class DocumentQuestionPipelineTests(TestCase):
         self.assertTrue(answer.insufficient_information)
         self.assertEqual(generator.calls, [])
 
-    def test_cli_routes_expiry_and_other_fields_through_grounded_retrieval(self) -> None:
+    def test_cli_routes_expiry_and_other_fields_through_grounded_retrieval(
+        self,
+    ) -> None:
         questions = (
             "Which documents expired in 2020?",
             "What is extracted_data.membership_number?",
@@ -502,7 +519,9 @@ class DocumentQuestionPipelineTests(TestCase):
                         {
                             "claims": [
                                 {
-                                    "claim": "The requested value appears in the document.",
+                                    "claim": (
+                                        "The requested value appears in the document."
+                                    ),
                                     "evidence_ids": ["E1"],
                                 }
                             ]

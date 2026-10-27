@@ -1054,6 +1054,7 @@ Fields:
 
 - `vector_index: DocumentVectorIndex`
 - `generator: TextGenerator`
+- `trace: Callable[[str, dict[str, object]], None] | None = None`
 
 Methods:
 

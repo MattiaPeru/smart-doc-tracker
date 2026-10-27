@@ -427,6 +427,11 @@ class DocumentQuestionPipeline:
 
     vector_index: DocumentVectorIndex
     generator: TextGenerator
+    trace: Callable[[str, dict[str, object]], None] | None = None
+
+    def _trace(self, stage: str, **details: object) -> None:
+        if self.trace is not None:
+            self.trace(stage, details)
 
     def ask(
         self,
@@ -441,12 +446,38 @@ class DocumentQuestionPipeline:
             raise ValueError("question cannot be empty")
         _LOGGER.info("Document assistant retrieval started (limit=%s).", limit)
         retrieval_question = _conversation_retrieval_question(candidate, history)
+        self._trace("retrieval_query", question=retrieval_question, limit=limit)
         semantic_chunks = self.vector_index.query(retrieval_question, limit=limit)
+        self._trace(
+            "semantic_results",
+            fragments=[
+                {
+                    "document_id": chunk.document_id,
+                    "source": chunk.source,
+                    "page": chunk.page,
+                    "distance": chunk.distance,
+                    "content": chunk.content,
+                }
+                for chunk in semantic_chunks
+            ],
+        )
         chunks = _merge_remembered_document_chunks(
             self.vector_index,
             semantic_chunks,
             history,
             limit=limit,
+        )
+        self._trace(
+            "selected_context",
+            fragments=[
+                {
+                    "document_id": chunk.document_id,
+                    "source": chunk.source,
+                    "page": chunk.page,
+                    "content": chunk.content,
+                }
+                for chunk in chunks
+            ],
         )
         _LOGGER.info(
             "Document assistant retrieval completed (%s fragments).",
@@ -454,6 +485,7 @@ class DocumentQuestionPipeline:
         )
         if not chunks:
             _LOGGER.info("Document assistant found no relevant local context.")
+            self._trace("no_context")
             return DocumentAnswer(
                 answer="No indexed document contains enough information to answer.",
                 document_ids=[],
@@ -497,14 +529,28 @@ class DocumentQuestionPipeline:
                     "Do not mark the answer insufficient merely because the previous "
                     "selection was invalid; first inspect the passages again."
                 )
+            user_prompt = base_prompt + retry_instruction
+            self._trace(
+                "generation_request",
+                attempt=attempt + 1,
+                system_prompt=_RAG_SYSTEM_PROMPT,
+                user_prompt=user_prompt,
+            )
             generated = self.generator.generate(
                 system_prompt=_RAG_SYSTEM_PROMPT,
-                user_prompt=base_prompt + retry_instruction,
+                user_prompt=user_prompt,
             )
+            self._trace("generation_response", attempt=attempt + 1, response=generated)
             try:
                 answer = _parse_generated_grounded_answer(generated, passages)
                 _validate_grounded_answer(answer, chunks)
             except (ValueError, DocumentParsingError) as exc:
+                self._trace(
+                    "validation_failed",
+                    attempt=attempt + 1,
+                    error_type=type(exc).__name__,
+                    message=str(exc),
+                )
                 rejected_generations.append(
                     GeneratedResponseDiagnostic(generated, str(exc))
                 )
@@ -526,6 +572,12 @@ class DocumentQuestionPipeline:
                 "Document assistant answer validated (%s claims, %s citations).",
                 len(answer.claims),
                 len(answer.document_ids),
+            )
+            self._trace(
+                "validated_answer",
+                answer=answer.answer,
+                document_ids=answer.document_ids,
+                insufficient_information=answer.insufficient_information,
             )
             return answer
         raise AssertionError("grounded generation loop did not return")
