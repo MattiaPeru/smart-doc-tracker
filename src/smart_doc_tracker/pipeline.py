@@ -430,6 +430,7 @@ class DocumentQuestionPipeline:
     trace: Callable[[str, dict[str, object]], None] | None = None
 
     def _trace(self, stage: str, **details: object) -> None:
+        """Send optional local diagnostics to the configured trace callback."""
         if self.trace is not None:
             self.trace(stage, details)
 

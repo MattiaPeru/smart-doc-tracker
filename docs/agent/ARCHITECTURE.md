@@ -16,7 +16,9 @@ adapters through explicit dependency injection.
 | Notifications | `src/smart_doc_tracker/notifier/` | Prepared desktop notifications |
 | Use cases | `src/smart_doc_tracker/controllers/` | CLI-facing workflow coordination |
 | CLI composition | `src/smart_doc_tracker/cli/`, `main.py` | Arguments, dependencies, and output |
-| Web adapter | `src/smart_doc_tracker/web/` | Loopback FastAPI routes and durable jobs |
+| Web composition | `src/smart_doc_tracker/web/app.py`, `cli.py` | FastAPI dependencies, lifecycle, and local server startup |
+| Web routes | `src/smart_doc_tracker/web/routes/` | HTTP adapters grouped by dashboard area |
+| Web services | `src/smart_doc_tracker/web/` | Local chat, upload, confirmation, and durable job coordination |
 | Scheduling | `scheduler.py` | Local daily foreground scheduling |
 
 ## Dependency boundaries

@@ -1,192 +1,53 @@
 """FastAPI composition root for the loopback-only web dashboard."""
 
-import argparse
-import json
-import logging
 import os
-import re
 import secrets
-import tempfile
-from collections import OrderedDict
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
-from contextlib import asynccontextmanager, contextmanager
+from collections.abc import AsyncIterator, Callable, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from threading import Event, Lock, Thread
-from typing import Annotated, Any
-from urllib.parse import urlsplit
+from threading import Lock, Thread
 
-from fastapi import (
-    Depends,
-    FastAPI,
-    File,
-    Form,
-    HTTPException,
-    Query,
-    Request,
-    UploadFile,
-)
-from fastapi.responses import FileResponse, HTMLResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI
 from fastapi.templating import Jinja2Templates
-from starlette.responses import Response
-from starlette.types import Scope
 
-from ..core.file_hash import FileHashingError, calculate_file_sha256
-from ..core.ocr import SUPPORTED_IMAGE_EXTENSIONS, TesseractOCR
-from ..core.parser import DocumentParser, DocumentParsingError, LongDocumentParser
+from ..core.ocr import TesseractOCR
+from ..core.parser import DocumentParser, LongDocumentParser
 from ..core.pdf import LocalPDFTextExtractor
-from ..db.database import (
-    DatabaseConfigurationError,
-    DatabaseError,
-    DocumentInsertResult,
-    MongoDocumentRepository,
-)
+from ..db.database import MongoDocumentRepository
 from ..db.vector_database import (
     ChromaDocumentVectorIndex,
-    VectorDatabaseError,
     collection_name_for_embedding_model,
 )
 from ..infrastructure.ollama import (
     OllamaClient,
-    OllamaConfigurationError,
-    OllamaConnectionError,
     OllamaEmbeddingClient,
-    OllamaResponseError,
 )
 from ..interfaces.document_repository import DocumentRepository
 from ..interfaces.document_vector_index import DocumentVectorIndex
 from ..interfaces.text_generator import TextGenerator
-from ..models.document import DocumentData
-from ..models.rag import ConversationTurn
-from ..mutation_pipeline import (
-    CoordinatedMutationError,
-    DocumentIndexingError,
-    DocumentMutationPipeline,
-)
-from ..pipeline import (
-    DocumentProcessingPipeline,
-    DocumentProcessingResult,
-    DocumentQuestionPipeline,
-)
-from ..settings import (
-    LocalReminderSettingsStore,
-    ReminderSettings,
-    ReminderSettingsError,
-)
+from ..mutation_pipeline import DocumentMutationPipeline
+from ..pipeline import DocumentProcessingPipeline, DocumentProcessingResult
+from ..settings import LocalReminderSettingsStore
+from .chat import ChatCancellation, DocumentChatService
 from .chat_memory import TemporaryChatMemory
 from .index_jobs import DocumentIndexJobService
+from .insertion import PendingInsertionCoordinator
 from .jobs import ProgressReporter, UploadJobService, UploadProcessor
-from .local_services import LocalServiceStartupError, LocalWebServiceManager
-from .pending import PendingDocumentError, PendingDocumentService
-from .schemas import (
-    ChatDocumentReference,
-    ChatRequest,
-    ChatResponse,
-    DocumentIndexedContentResponse,
-    DocumentResponse,
-    DocumentUpdateResponse,
-    IndexUpdateJobResponse,
-    PendingDocumentResponse,
-    ReminderSettingsResponse,
-    UploadJobResponse,
-)
+from .local_services import LocalWebServiceManager
+from .pending import PendingDocumentService
+from .routes.context import WebRouteContext
+from .routes.document_chat import register_document_chat_routes
+from .routes.documents import register_documents_routes
+from .routes.pending_documents import register_pending_document_routes
+from .routes.settings import register_settings_routes
+from .routes.upload_jobs import register_upload_job_routes
+from .security import LocalStaticFiles, LocalWebSecurity
+from .upload import UploadIntake
 
 RepositoryFactory = Callable[[], DocumentRepository]
 _WEB_ROOT = Path(__file__).parent
-_SUPPORTED_EXTENSIONS = SUPPORTED_IMAGE_EXTENSIONS | {".pdf"}
-_LANGUAGE_CODE = re.compile(r"^[A-Za-z][A-Za-z0-9_+-]{0,31}$")
-_MAX_UPLOAD_BYTES = 25 * 1024 * 1024
-_UPLOAD_CHUNK_BYTES = 1024 * 1024
-_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
-_UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
-_CSRF_HEADER = "X-Smart-Doc-CSRF"
-_CONTENT_SECURITY_POLICY = "; ".join(
-    (
-        "default-src 'self'",
-        "base-uri 'none'",
-        "connect-src 'self'",
-        "form-action 'self'",
-        "frame-ancestors 'none'",
-        "img-src 'self' data:",
-        "object-src 'none'",
-        "script-src 'self'",
-        "style-src 'self'",
-    )
-)
-_LOG_LEVELS = ("debug", "info", "warning", "error", "critical")
-_LOGGER = logging.getLogger(__name__)
-
-
-class LocalStaticFiles(StaticFiles):
-    """Serve local dashboard assets without retaining stale browser copies."""
-
-    async def get_response(self, path: str, scope: Scope) -> Response:
-        """Return one static asset with browser persistence disabled."""
-        response = await super().get_response(path, scope)
-        response.headers["Cache-Control"] = "no-store, max-age=0"
-        return response
-
-
-class _ChatCancellation:
-    """Coordinate cancellation and conversation memory across chat worker threads."""
-
-    def __init__(self, memory: TemporaryChatMemory) -> None:
-        self._memory = memory
-        self._lock = Lock()
-        self._active: dict[str, tuple[str | None, Event]] = {}
-        self._cancelled: OrderedDict[str, None] = OrderedDict()
-
-    @contextmanager
-    def track(
-        self, request_id: str | None, conversation_id: str | None
-    ) -> Iterator[Event]:
-        """Track one request, including a cancellation received before it starts."""
-        cancelled = Event()
-        if request_id is not None:
-            with self._lock:
-                if request_id in self._cancelled:
-                    cancelled.set()
-                    del self._cancelled[request_id]
-                self._active[request_id] = (conversation_id, cancelled)
-        try:
-            yield cancelled
-        finally:
-            if request_id is not None:
-                with self._lock:
-                    self._active.pop(request_id, None)
-
-    def cancel(self, request_id: str) -> None:
-        """Cancel an active request or remember an early cancellation briefly."""
-        with self._lock:
-            active = self._active.get(request_id)
-            if active is not None:
-                active[1].set()
-            else:
-                self._cancelled[request_id] = None
-                if len(self._cancelled) > 1000:
-                    self._cancelled.popitem(last=False)
-
-    def clear(self, conversation_id: str) -> None:
-        """Cancel active requests and forget one conversation atomically."""
-        with self._lock:
-            for active_conversation_id, cancelled in self._active.values():
-                if active_conversation_id == conversation_id:
-                    cancelled.set()
-            self._memory.clear(conversation_id)
-
-    def remember(
-        self,
-        conversation_id: str,
-        cancelled: Event,
-        turn: ConversationTurn,
-    ) -> None:
-        """Keep a completed exchange only if cancellation has not won the race."""
-        with self._lock:
-            if cancelled.is_set():
-                raise HTTPException(status_code=409, detail="Chat request cancelled.")
-            self._memory.remember(conversation_id, turn)
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,7 +107,7 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
     resolved = dependencies or default_web_dependencies()
     chat_debug = os.environ.get("SMART_DOC_TRACKER_CHAT_DEBUG") == "1"
     chat_memory = resolved.chat_memory or TemporaryChatMemory()
-    chat_cancellation = _ChatCancellation(chat_memory)
+    chat_cancellation = ChatCancellation(chat_memory)
     data_path = resolved.processed_path.parent
     reminder_settings = resolved.reminder_settings or LocalReminderSettingsStore(
         data_path / "settings.json"
@@ -260,6 +121,7 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
         pending_documents,
         data_path / "processing_queue",
     )
+    upload_intake = UploadIntake(jobs)
     mutation_lock = Lock()
     index_jobs = (
         DocumentIndexJobService(
@@ -289,137 +151,28 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
         if resolved.vector_index is not None
         else None
     )
-    insertion_lock = Lock()
-    insertion_stop = Event()
-
-    def complete_pending_insertion(pending_id: str) -> DocumentInsertResult:
-        """Resume a confirmed insertion from its durable local manifest."""
-        pending = pending_documents.get(pending_id)
-        if pending is None or pending.confirmation_document is None:
-            raise PendingDocumentError("The confirmed insertion is unavailable.")
-        if pending.cancelling:
-            raise PendingDocumentError("This insertion is being cancelled.")
-        if pending.archived_file_name is not None:
-            archived = resolved.processed_path / pending.archived_file_name
-            if pending.source_path.is_file():
-                # The archive move was interrupted before it started.
-                pass
-            elif archived.is_file():
-                with resolved.repository_factory() as repository:
-                    record = (
-                        repository.get_document_by_id(pending.insertion_document_id)
-                        if pending.insertion_document_id is not None
-                        else None
-                    )
-                if record is not None and record.source_file_name == archived.name:
-                    if resolved.vector_index is None:
-                        raise CoordinatedMutationError(
-                            "The local search index is unavailable."
-                        )
-                    with mutation_lock:
-                        resolved.vector_index.upsert_document(
-                            record.id,
-                            raw_text=pending.raw_text,
-                            document=record.document,
-                        )
-                        if not resolved.vector_index.get_document_fragments(record.id):
-                            raise CoordinatedMutationError(
-                                "The document is not indexed locally."
-                            )
-                        with resolved.repository_factory() as repository:
-                            committed = repository.mark_document_committed(record.id)
-                        if committed is None:
-                            raise CoordinatedMutationError(
-                                "The document could not be committed locally."
-                            )
-                        record = committed
-                    pending_documents.finish_archive(pending_id)
-                    jobs.discard_for_pending(pending_id)
-                    return DocumentInsertResult(record, False)
-                pending_documents.restore_archive(pending, archived)
-                pending = pending_documents.get(pending_id)
-                if pending is None:
-                    raise PendingDocumentError(
-                        "The confirmation source is unavailable."
-                    )
-        service = _require_mutation_service(mutations)
-        confirmation_document = pending.confirmation_document
-        if confirmation_document is None:
-            raise PendingDocumentError("The confirmed insertion is unavailable.")
-        try:
-            result = service.confirm(
-                confirmation_document,
-                file_hash=pending.file_hash
-                or calculate_file_sha256(pending.source_path),
-                raw_text=pending.raw_text,
-                sections=pending.sections,
-                finalize=(
-                    None
-                    if pending.is_manual
-                    else lambda: pending_documents.archive(pending.id)
-                ),
-                undo_finalize=(
-                    None
-                    if pending.is_manual
-                    else lambda archived: pending_documents.restore_archive(
-                        pending, archived
-                    )
-                ),
-                commit_finalize=(
-                    None
-                    if pending.is_manual
-                    else lambda: pending_documents.finish_archive(pending.id)
-                ),
-                record_insert=lambda document_id: pending_documents.record_insertion_id(
-                    pending.id, document_id
-                ),
-            )
-        except DocumentIndexingError as exc:
-            if not exc.unavailable and not pending.is_manual:
-                failures = pending_documents.record_index_failure(pending.id)
-                if failures >= 2:
-                    cancelling = pending_documents.mark_cancelling(pending.id)
-                    if cancelling.insertion_document_id is not None:
-                        service.cancel_insertion(cancelling.insertion_document_id)
-                    jobs.fail_pending_insertion(pending.id)
-                    pending_documents.reject(pending.id)
-            raise
-        if pending.is_manual:
-            pending_documents.reject(pending.id)
-        jobs.discard_for_pending(pending_id)
-        return result
-
-    def retry_pending_insertions() -> None:
-        """Retry interrupted or unavailable local stores until shutdown."""
-        while not insertion_stop.wait(5):
-            for item in pending_documents.list():
-                if (
-                    item.confirmation_document is None
-                    or item.cancelling
-                    or insertion_stop.is_set()
-                ):
-                    continue
-                with insertion_lock:
-                    try:
-                        complete_pending_insertion(item.id)
-                    except Exception as exc:
-                        _LOGGER.warning(
-                            "Pending insertion %s still needs a local store (%s).",
-                            item.id,
-                            type(exc).__name__,
-                        )
+    insertion = PendingInsertionCoordinator(
+        pending_documents,
+        jobs,
+        resolved.repository_factory,
+        resolved.vector_index,
+        mutations,
+        mutation_lock,
+        Lock(),
+        resolved.processed_path,
+    )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         """Stop workers promptly and release shared local connections."""
         insertion_worker = Thread(
-            target=retry_pending_insertions,
+            target=insertion.retry_until_stopped,
             name="smart-doc-insertion-retry",
             daemon=True,
         )
         insertion_worker.start()
         yield
-        insertion_stop.set()
+        insertion.stop()
         insertion_worker.join(timeout=1)
         jobs.close()
         if index_jobs is not None:
@@ -447,833 +200,43 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
         name="static",
     )
 
-    @app.middleware("http")
-    async def enforce_local_web_boundary(
-        request: Request,
-        call_next: Callable[[Request], Awaitable[Response]],
-    ) -> Response:
-        """Reject external authorities, cross-origin writes, and missing CSRF proof."""
-        host = request.headers.get("host", "")
-        if _normalized_authority(host) is None:
-            return _secure_response(Response(status_code=400))
-        origin = request.headers.get("origin")
-        if origin is not None and not _same_loopback_origin(origin, host):
-            return _secure_response(Response(status_code=403))
-        if request.method in _UNSAFE_METHODS:
-            supplied_token = request.headers.get(_CSRF_HEADER, "")
-            if not secrets.compare_digest(supplied_token, csrf_token):
-                return _secure_response(Response(status_code=403))
-        try:
-            response = await call_next(request)
-        except Exception as exc:
-            _LOGGER.error(
-                "Request %s failed with an unhandled %s.",
-                request.method,
-                type(exc).__name__,
-            )
-            raise
-        if response.status_code >= 500:
-            route = request.scope.get("route")
-            route_pattern = getattr(route, "path", "unmatched route")
-            _LOGGER.error(
-                "Request %s %s returned HTTP %s.",
-                request.method,
-                route_pattern,
-                response.status_code,
-            )
-        return _secure_response(response)
+    app.middleware("http")(LocalWebSecurity(csrf_token).enforce)
 
-    def repository() -> Iterator[DocumentRepository]:
-        """Open and close one local repository for a request."""
-        try:
-            with resolved.repository_factory() as opened_repository:
-                yield opened_repository
-        except (DatabaseConfigurationError, DatabaseError) as exc:
-            raise HTTPException(
-                status_code=503,
-                detail="The local document database is unavailable.",
-            ) from exc
-
-    Repository = Annotated[DocumentRepository, Depends(repository)]
-
-    def default_reminder_days() -> int:
-        """Read the local default or expose one sanitized service error."""
-        try:
-            return reminder_settings.load().default_notification_days_before
-        except ReminderSettingsError as exc:
-            raise HTTPException(
-                status_code=503,
-                detail="The local reminder settings are unavailable.",
-            ) from exc
-
-    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
-    def dashboard(request: Request) -> HTMLResponse:
-        """Render the local single-page document dashboard."""
-        try:
-            default_days = reminder_settings.load().default_notification_days_before
-        except ReminderSettingsError:
-            default_days = 30
-        response = templates.TemplateResponse(
-            request=request,
-            name="dashboard.html",
-            context={
-                "alert_days": default_days,
-                "csrf_token": csrf_token,
-                "max_upload_mb": 25,
-            },
-        )
-        response.headers["Cache-Control"] = "no-store, max-age=0"
-        return response
-
-    @app.get("/api/settings/reminders", response_model=ReminderSettingsResponse)
-    def get_reminder_settings() -> ReminderSettingsResponse:
-        """Return the locally persisted default expiration reminder."""
-        try:
-            return ReminderSettingsResponse.model_validate(
-                reminder_settings.load().model_dump()
-            )
-        except ReminderSettingsError as exc:
-            raise HTTPException(
-                status_code=503,
-                detail="The local reminder settings are unavailable.",
-            ) from exc
-
-    @app.put("/api/settings/reminders", response_model=ReminderSettingsResponse)
-    def update_reminder_settings(
-        settings: ReminderSettings,
-    ) -> ReminderSettingsResponse:
-        """Persist the default reminder used by documents without an override."""
-        try:
-            saved = reminder_settings.save(settings)
-            return ReminderSettingsResponse.model_validate(saved.model_dump())
-        except ReminderSettingsError as exc:
-            raise HTTPException(
-                status_code=503,
-                detail="The local reminder settings could not be saved.",
-            ) from exc
-
-    @app.get("/api/documents", response_model=list[DocumentResponse])
-    def list_documents(
-        repository: Repository,
-        field_key: Annotated[str | None, Query(max_length=200)] = None,
-        field_value: Annotated[str | None, Query(max_length=10_000)] = None,
-    ) -> list[DocumentResponse]:
-        """List documents or exactly match one validated dynamic JSON path."""
-        if (field_key is None) != (field_value is None):
-            raise HTTPException(
-                status_code=422,
-                detail="field_key and field_value must be provided together.",
-            )
-        try:
-            records = (
-                repository.search_by_dynamic_field(
-                    field_key,
-                    _parse_query_value(field_value),
-                )
-                if field_key is not None and field_value is not None
-                else repository.get_all_documents()
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        today = resolved.today_provider()
-        alert_days = default_reminder_days()
-        pending_ids = pending_documents.insertion_ids()
-        pending_hashes = pending_documents.insertion_hashes()
-        return [
-            DocumentResponse.from_record(
-                record,
-                today=today,
-                alert_days=alert_days,
-            )
-            for record in records
-            if record.id not in pending_ids and record.file_hash not in pending_hashes
-        ]
-
-    @app.post("/api/chat", response_model=ChatResponse)
-    def ask_documents(
-        request: ChatRequest,
-        repository: Repository,
-    ) -> ChatResponse:
-        """Answer from local document data and return validated citations."""
-        question = request.question.strip()
-        if not question:
-            raise HTTPException(status_code=422, detail="The question cannot be empty.")
-        if pending_documents.insertion_ids():
-            raise HTTPException(
-                status_code=503,
-                detail="A document is still being inserted. Please try again shortly.",
-            )
-        with chat_cancellation.track(
-            request.request_id, request.conversation_id
-        ) as cancelled:
-            trace_id = request.request_id or secrets.token_hex(8)
-
-            def trace(stage: str, details: dict[str, object]) -> None:
-                """Write an opt-in, request-scoped trace to the local terminal."""
-                if stage in {"semantic_results", "selected_context"}:
-                    fragments = details.get("fragments", [])
-                    if isinstance(fragments, list):
-                        for fragment in fragments:
-                            if not isinstance(fragment, dict):
-                                continue
-                            document_id = fragment.get("document_id")
-                            if isinstance(document_id, str):
-                                try:
-                                    record = repository.get_document_by_id(document_id)
-                                except DatabaseError:
-                                    record = None
-                                fragment["file_name"] = (
-                                    record.source_file_name if record else None
-                                )
-                _LOGGER.info(
-                    "Chat trace [%s] %s\n%s",
-                    trace_id,
-                    stage,
-                    json.dumps(details, ensure_ascii=False, indent=2, default=str),
-                )
-
-            if cancelled.is_set():
-                if chat_debug:
-                    trace(
-                        "cancelled", {"message": "Request cancelled before processing."}
-                    )
-                raise HTTPException(status_code=409, detail="Chat request cancelled.")
-            if chat_debug:
-                _LOGGER.info(
-                    "Chat request accepted with local terminal tracing enabled."
-                )
-            else:
-                _LOGGER.info("Chat request accepted; document contents are not logged.")
-            history = (
-                chat_memory.history(request.conversation_id)
-                if request.conversation_id is not None
-                else ()
-            )
-            if chat_debug:
-                trace(
-                    "request",
-                    {
-                        "question": question,
-                        "conversation_id": request.conversation_id,
-                        "history": [
-                            {
-                                "question": turn.question,
-                                "answer": turn.answer,
-                                "document_ids": list(turn.document_ids),
-                            }
-                            for turn in history
-                        ],
-                    },
-                )
-            try:
-                _LOGGER.info("Chat request is using semantic retrieval and Ollama.")
-                if resolved.vector_index is None or resolved.rag_generator is None:
-                    raise HTTPException(
-                        status_code=503,
-                        detail="The local document assistant is unavailable.",
-                    )
-                answer = DocumentQuestionPipeline(
-                    resolved.vector_index,
-                    resolved.rag_generator,
-                    trace=trace if chat_debug else None,
-                ).ask(question, history=history)
-            except (
-                DocumentParsingError,
-                OllamaConfigurationError,
-                OllamaConnectionError,
-                OllamaResponseError,
-                VectorDatabaseError,
-            ) as exc:
-                _LOGGER.error("Chat request failed with %s.", type(exc).__name__)
-                if chat_debug:
-                    trace(
-                        "error",
-                        {"error_type": type(exc).__name__, "message": str(exc)},
-                    )
-                raise HTTPException(
-                    status_code=503,
-                    detail=_chat_error_detail(exc),
-                ) from exc
-            if cancelled.is_set():
-                if chat_debug:
-                    trace(
-                        "cancelled", {"message": "Request cancelled after generation."}
-                    )
-                raise HTTPException(status_code=409, detail="Chat request cancelled.")
-
-            documents: list[ChatDocumentReference] = []
-            for document_id in dict.fromkeys(answer.document_ids):
-                record = repository.get_document_by_id(document_id)
-                if record is not None:
-                    documents.append(ChatDocumentReference.from_record(record))
-            _LOGGER.info(
-                "Chat request completed successfully (%s supporting documents).",
-                len(documents),
-            )
-            if chat_debug:
-                trace(
-                    "completed",
-                    {
-                        "answer": answer.answer,
-                        "files": [item.model_dump() for item in documents],
-                    },
-                )
-            if request.conversation_id is not None:
-                chat_cancellation.remember(
-                    request.conversation_id,
-                    cancelled,
-                    ConversationTurn(
-                        question=question,
-                        answer=answer.answer,
-                        document_ids=tuple(answer.document_ids),
-                    ),
-                )
-            return ChatResponse(
-                answer=answer.answer,
-                claims=answer.claims,
-                documents=documents,
-                insufficient_information=answer.insufficient_information,
-            )
-
-    @app.delete("/api/chat/requests/{request_id}", status_code=204)
-    def cancel_chat_request(request_id: str) -> Response:
-        """Discard an active or not-yet-started local chat answer."""
-        if not re.fullmatch(
-            r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
-            request_id,
-        ):
-            raise HTTPException(status_code=422, detail="Invalid request identifier.")
-        chat_cancellation.cancel(request_id)
-        return Response(status_code=204)
-
-    @app.delete("/api/chat/conversations/{conversation_id}", status_code=204)
-    def clear_chat_conversation(conversation_id: str) -> Response:
-        """Forget one process-local chat conversation."""
-        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", conversation_id):
-            raise HTTPException(
-                status_code=422,
-                detail="Invalid conversation identifier.",
-            )
-        chat_cancellation.clear(conversation_id)
-        return Response(status_code=204)
-
-    @app.get("/api/documents/{document_id}", response_model=DocumentResponse)
-    def get_document(
-        document_id: str,
-        repository: Repository,
-    ) -> DocumentResponse:
-        """Return one locally stored document."""
-        record = repository.get_document_by_id(document_id)
-        if record is None or record.file_hash in pending_documents.insertion_hashes():
-            raise HTTPException(status_code=404, detail="Document not found.")
-        alert_days = default_reminder_days()
-        return DocumentResponse.from_record(
-            record,
-            today=resolved.today_provider(),
-            alert_days=alert_days,
-        )
-
-    @app.get("/api/documents/{document_id}/original")
-    def get_document_original(
-        document_id: str,
-        repository: Repository,
-        download: bool = False,
-    ) -> FileResponse:
-        """Open or download the original file from the local processed archive."""
-        record = repository.get_document_by_id(document_id)
-        if record is None or record.file_hash in pending_documents.insertion_hashes():
-            raise HTTPException(status_code=404, detail="Document not found.")
-        if record.source_file_name is None:
-            raise HTTPException(
-                status_code=404,
-                detail="The original file is not available for this document.",
-            )
-        processed_root = resolved.processed_path.expanduser().resolve()
-        source_path = (processed_root / record.source_file_name).resolve()
-        if source_path.parent != processed_root or not source_path.is_file():
-            raise HTTPException(
-                status_code=404,
-                detail="The original file is not available for this document.",
-            )
-        return FileResponse(
-            source_path,
-            filename=record.source_file_name,
-            content_disposition_type="attachment" if download else "inline",
-        )
-
-    @app.get(
-        "/api/documents/{document_id}/indexed-content",
-        response_model=DocumentIndexedContentResponse,
+    chat_service = DocumentChatService(
+        resolved.vector_index,
+        resolved.rag_generator,
+        pending_documents,
+        chat_memory,
+        chat_cancellation,
+        chat_debug,
     )
-    def get_document_indexed_content(
-        document_id: str,
-        repository: Repository,
-    ) -> DocumentIndexedContentResponse:
-        """Return every local Chroma content fragment for one stored document."""
-        record = repository.get_document_by_id(document_id)
-        if record is None or record.file_hash in pending_documents.insertion_hashes():
-            raise HTTPException(status_code=404, detail="Document not found.")
-        if resolved.vector_index is None:
-            raise HTTPException(
-                status_code=503,
-                detail="The local vector database is unavailable.",
-            )
-        try:
-            fragments = resolved.vector_index.get_document_fragments(document_id)
-        except (ValueError, VectorDatabaseError) as exc:
-            raise HTTPException(
-                status_code=503,
-                detail="The indexed document content is unavailable.",
-            ) from exc
-        return DocumentIndexedContentResponse.from_fragments(
-            document_id,
-            fragments,
-        )
-
-    @app.put("/api/documents/{document_id}", response_model=DocumentUpdateResponse)
-    def update_document(
-        document_id: str,
-        document: DocumentData,
-    ) -> DocumentUpdateResponse:
-        """Store one document update and queue its local search refresh."""
-        alert_days = default_reminder_days()
-        if document_id in pending_documents.insertion_ids():
-            raise HTTPException(status_code=404, detail="Document not found.")
-        service = _require_mutation_service(mutations)
-        try:
-            updated = service.update(document_id, document)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except CoordinatedMutationError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-        if updated is None:
-            raise HTTPException(status_code=404, detail="Document not found.")
-        return DocumentUpdateResponse.from_update(
-            updated.record,
-            index_update_id=updated.index_update_id,
-            today=resolved.today_provider(),
-            alert_days=alert_days,
-        )
-
-    @app.post("/api/documents/manual", response_model=DocumentResponse)
-    def create_manual_document(document: DocumentData) -> DocumentResponse:
-        """Validate, persist, and index a document entered entirely by the user."""
-        alert_days = default_reminder_days()
-        try:
-            document.ensure_complete_dynamic_values()
-            with insertion_lock:
-                pending = pending_documents.add_manual(document)
-                result = complete_pending_insertion(pending.id)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except (
-            CoordinatedMutationError,
-            DatabaseError,
-            PendingDocumentError,
-            VectorDatabaseError,
-        ) as exc:
-            raise HTTPException(
-                status_code=503,
-                detail=(
-                    "There were problems inserting the document. "
-                    "Please try again later, or discard it from pending documents."
-                ),
-            ) from exc
-        return DocumentResponse.from_record(
-            result.record,
-            today=resolved.today_provider(),
-            alert_days=alert_days,
-        )
-
-    @app.get(
-        "/api/document-updates/{update_id}",
-        response_model=IndexUpdateJobResponse,
+    context = WebRouteContext(
+        dependencies=resolved,
+        reminder_settings=reminder_settings,
+        pending_documents=pending_documents,
+        jobs=jobs,
+        upload_intake=upload_intake,
+        mutations=mutations,
+        insertion=insertion,
+        index_jobs=index_jobs,
+        chat_service=chat_service,
+        chat_cancellation=chat_cancellation,
+        templates=templates,
+        csrf_token=csrf_token,
     )
-    def get_document_update(update_id: str) -> IndexUpdateJobResponse:
-        """Return simple progress for one accepted background refresh."""
-        job = _require_index_jobs(index_jobs).get(update_id)
-        if job is None:
-            raise HTTPException(status_code=404, detail="Update not found.")
-        return IndexUpdateJobResponse.from_job(job)
-
-    @app.delete("/api/documents/{document_id}", status_code=204)
-    def delete_document(document_id: str) -> None:
-        """Delete one document consistently from MongoDB and ChromaDB."""
-        if document_id in pending_documents.insertion_ids():
-            raise HTTPException(status_code=404, detail="Document not found.")
-        service = _require_mutation_service(mutations)
-        try:
-            deleted = service.delete(document_id)
-        except CoordinatedMutationError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-        if deleted is None:
-            raise HTTPException(status_code=404, detail="Document not found.")
-
-    @app.get("/api/pending-documents", response_model=list[PendingDocumentResponse])
-    def list_pending_documents() -> list[PendingDocumentResponse]:
-        """List uploads that have not yet been explicitly confirmed."""
-        return [
-            PendingDocumentResponse.from_pending(item)
-            for item in pending_documents.list()
-        ]
-
-    @app.get(
-        "/api/pending-documents/{pending_id}",
-        response_model=PendingDocumentResponse,
-    )
-    def get_pending_document(pending_id: str) -> PendingDocumentResponse:
-        """Return one editable pending upload."""
-        pending = pending_documents.get(pending_id)
-        if pending is None:
-            raise HTTPException(status_code=404, detail="Pending document not found.")
-        return PendingDocumentResponse.from_pending(pending)
-
-    @app.post(
-        "/api/pending-documents/{pending_id}/confirm",
-        response_model=DocumentResponse,
-    )
-    def confirm_pending_document(
-        pending_id: str,
-        document: DocumentData,
-    ) -> DocumentResponse:
-        """Validate user edits before persistence, indexing, and archiving."""
-        alert_days = default_reminder_days()
-        try:
-            with insertion_lock:
-                pending = pending_documents.get(pending_id)
-                if pending is None:
-                    raise HTTPException(
-                        status_code=404, detail="Pending document not found."
-                    )
-                file_hash = pending.file_hash or calculate_file_sha256(
-                    pending.source_path
-                )
-                pending_documents.begin_insertion(
-                    pending_id, document, file_hash=file_hash
-                )
-                result = complete_pending_insertion(pending_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except (
-            CoordinatedMutationError,
-            DatabaseError,
-            FileHashingError,
-            PendingDocumentError,
-            VectorDatabaseError,
-        ) as exc:
-            raise HTTPException(
-                status_code=503,
-                detail=(
-                    "There were problems inserting the document. "
-                    "Please try again later, or discard it."
-                ),
-            ) from exc
-        return DocumentResponse.from_record(
-            result.record,
-            today=resolved.today_provider(),
-            alert_days=alert_days,
-        )
-
-    @app.delete("/api/pending-documents/{pending_id}", status_code=204)
-    def reject_pending_document(pending_id: str) -> None:
-        """Reject and securely discard one staged upload."""
-        with insertion_lock:
-            try:
-                pending = pending_documents.mark_cancelling(pending_id)
-            except PendingDocumentError as exc:
-                raise HTTPException(
-                    status_code=404, detail="Pending document not found."
-                ) from exc
-            except OSError as exc:
-                raise HTTPException(
-                    status_code=503,
-                    detail="The cancellation could not be recorded locally.",
-                ) from exc
-            try:
-                document_ids = set()
-                if pending.insertion_document_id is not None:
-                    document_ids.add(pending.insertion_document_id)
-                if pending.file_hash is not None:
-                    with resolved.repository_factory() as repository:
-                        partial = repository.get_document_by_file_hash(
-                            pending.file_hash
-                        )
-                    if partial is not None and partial.source_file_name is None:
-                        document_ids.add(partial.id)
-                for document_id in document_ids:
-                    _require_mutation_service(mutations).cancel_insertion(document_id)
-            except (DatabaseError, CoordinatedMutationError) as exc:
-                raise HTTPException(status_code=503, detail=str(exc)) from exc
-            try:
-                pending_documents.reject(pending_id)
-            except OSError as exc:
-                raise HTTPException(
-                    status_code=503,
-                    detail="The pending source could not be removed. Try again later.",
-                ) from exc
-            jobs.discard_for_pending(pending_id)
-
-    @app.post(
-        "/api/uploads",
-        response_model=UploadJobResponse,
-        status_code=202,
-    )
-    async def upload_document(
-        file: Annotated[UploadFile, File(description="A local image or PDF")],
-        language: Annotated[str, Form(min_length=1, max_length=32)] = "eng",
-    ) -> UploadJobResponse:
-        """Validate, spool, and queue one document for local processing."""
-        safe_name = Path(file.filename or "").name
-        suffix = Path(safe_name).suffix.lower()
-        if not safe_name or suffix not in _SUPPORTED_EXTENSIONS:
-            raise HTTPException(status_code=415, detail="Unsupported document format.")
-        if not _LANGUAGE_CODE.fullmatch(language):
-            raise HTTPException(status_code=422, detail="Invalid OCR language code.")
-        temporary_path: Path | None = None
-        try:
-            descriptor, raw_path = tempfile.mkstemp(
-                prefix="smart-doc-upload-",
-                suffix=suffix,
-            )
-            temporary_path = Path(raw_path)
-            total = 0
-            with os.fdopen(descriptor, "wb") as destination:
-                while chunk := await file.read(_UPLOAD_CHUNK_BYTES):
-                    total += len(chunk)
-                    if total > _MAX_UPLOAD_BYTES:
-                        raise HTTPException(
-                            status_code=413,
-                            detail="The upload exceeds the 25 MB limit.",
-                        )
-                    destination.write(chunk)
-            if total == 0:
-                raise HTTPException(status_code=422, detail="The upload is empty.")
-            job = jobs.submit(
-                temporary_path,
-                file_name=safe_name,
-                language=language,
-            )
-            temporary_path = None
-            return UploadJobResponse.from_job(job)
-        finally:
-            await file.close()
-            if temporary_path is not None:
-                temporary_path.unlink(missing_ok=True)
-
-    @app.get("/api/jobs", response_model=list[UploadJobResponse])
-    def list_upload_jobs() -> list[UploadJobResponse]:
-        """List documents queued, processing, or failed."""
-        return [UploadJobResponse.from_job(job) for job in jobs.list_processing()]
-
-    @app.post("/api/jobs/retry-all")
-    def retry_all_failed_upload_jobs() -> dict[str, int]:
-        """Retry all failed uploads with available local source files."""
-        return {"retried": jobs.retry_all_failed()}
-
-    @app.delete("/api/jobs/failed")
-    def discard_all_failed_upload_jobs() -> dict[str, int]:
-        """Discard all failed uploads and their local source files."""
-        return {"removed": jobs.discard_all_failed()}
-
-    @app.get("/api/jobs/{job_id}", response_model=UploadJobResponse)
-    def get_upload_job(job_id: str) -> UploadJobResponse:
-        """Return the current status of one process-local upload job."""
-        job = jobs.get(job_id)
-        if job is None:
-            raise HTTPException(status_code=404, detail="Upload job not found.")
-        return UploadJobResponse.from_job(job)
-
-    @app.post("/api/jobs/{job_id}/retry", response_model=UploadJobResponse)
-    def retry_failed_upload_job(job_id: str) -> UploadJobResponse:
-        """Retry one failed upload using its retained local source."""
-        job = jobs.get(job_id)
-        if job is None:
-            raise HTTPException(status_code=404, detail="Upload job not found.")
-        if not jobs.retry_failed(job_id):
-            raise HTTPException(
-                status_code=409,
-                detail="Only failed uploads with a local source file can be retried.",
-            )
-        queued = jobs.get(job_id)
-        if queued is None:
-            raise HTTPException(status_code=404, detail="Upload job not found.")
-        return UploadJobResponse.from_job(queued)
-
-    @app.delete("/api/jobs/{job_id}", status_code=204)
-    def discard_failed_upload_job(job_id: str) -> None:
-        """Discard one failed job and its locally queued source file."""
-        job = jobs.get(job_id)
-        if job is None:
-            raise HTTPException(status_code=404, detail="Upload job not found.")
-        if not jobs.discard_failed(job_id):
-            raise HTTPException(
-                status_code=409,
-                detail="Only failed upload jobs can be removed.",
-            )
-
+    for router in (
+        register_settings_routes(context),
+        register_documents_routes(context),
+        register_document_chat_routes(context),
+        register_pending_document_routes(context),
+        register_upload_job_routes(context),
+    ):
+        app.include_router(router)
     return app
-
-
-def _normalized_authority(value: str) -> tuple[str, int] | None:
-    """Parse an HTTP authority and accept only an exact loopback hostname."""
-    if not value or any(character in value for character in "/?#@"):
-        return None
-    try:
-        parsed = urlsplit(f"//{value}")
-        port = parsed.port or 80
-    except ValueError:
-        return None
-    hostname = parsed.hostname.lower() if parsed.hostname is not None else None
-    if hostname not in _LOOPBACK_HOSTS:
-        return None
-    return hostname, port
-
-
-def _same_loopback_origin(origin: str, host: str) -> bool:
-    """Require browser requests to originate from the exact served authority."""
-    try:
-        parsed = urlsplit(origin)
-        origin_authority = _normalized_authority(parsed.netloc)
-    except ValueError:
-        return False
-    return (
-        parsed.scheme == "http"
-        and parsed.path == ""
-        and parsed.query == ""
-        and parsed.fragment == ""
-        and origin_authority is not None
-        and origin_authority == _normalized_authority(host)
-    )
-
-
-def _secure_response(response: Response) -> Response:
-    """Apply restrictive browser policies to every local HTTP response."""
-    response.headers["Content-Security-Policy"] = _CONTENT_SECURITY_POLICY
-    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
-    response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
-    response.headers["Permissions-Policy"] = (
-        "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
-    )
-    response.headers["Referrer-Policy"] = "no-referrer"
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
-    return response
-
-
-def _require_mutation_service(
-    service: DocumentMutationPipeline | None,
-) -> DocumentMutationPipeline:
-    """Return configured mutation coordination or a safe service error."""
-    if service is None:
-        raise HTTPException(
-            status_code=503,
-            detail="The local vector database is unavailable.",
-        )
-    return service
-
-
-def _require_index_jobs(
-    service: DocumentIndexJobService | None,
-) -> DocumentIndexJobService:
-    """Return the configured local refresh queue or a safe service error."""
-    if service is None:
-        raise HTTPException(
-            status_code=503,
-            detail="Document updates are temporarily unavailable.",
-        )
-    return service
-
-
-def _parse_query_value(value: str) -> Any:
-    """Interpret JSON scalars and structures, falling back to a plain string."""
-    try:
-        return json.loads(value)
-    except json.JSONDecodeError:
-        return value
-
-
-def _chat_error_detail(exc: Exception) -> str:
-    """Return a safe, actionable browser message for one local chat failure."""
-    if isinstance(exc, OllamaConnectionError):
-        return "The local Ollama service or language model is unavailable."
-    if isinstance(exc, OllamaResponseError):
-        return "The local Ollama service returned an invalid response."
-    if isinstance(exc, VectorDatabaseError):
-        return "The local document search could not be completed."
-    if isinstance(exc, DocumentParsingError):
-        return "The local model returned an invalid grounded answer."
-    return "The local document assistant is not configured correctly."
 
 
 def run(argv: Sequence[str] | None = None) -> None:
     """Run the dashboard and own its required local service lifecycle."""
-    parser = argparse.ArgumentParser(description="Run the local document dashboard.")
-    parser.add_argument("--host", default="127.0.0.1", choices=("127.0.0.1", "::1"))
-    parser.add_argument("--port", type=int, default=8080)
-    parser.add_argument(
-        "--log-level",
-        choices=_LOG_LEVELS,
-        default="info",
-        help="Terminal detail level (default: info).",
-    )
-    parser.add_argument(
-        "--access-log",
-        action="store_true",
-        help="Show one terminal line for every HTTP request.",
-    )
-    parser.add_argument(
-        "--chat-debug",
-        action="store_true",
-        help=(
-            "Show chat retrieval, document excerpts, prompts, model output, "
-            "and errors in the terminal."
-        ),
-    )
-    arguments = parser.parse_args(argv)
-    if not 1 <= arguments.port <= 65_535:
-        parser.error("--port must be between 1 and 65535")
-    _configure_application_logging(
-        "info" if arguments.chat_debug else arguments.log_level
-    )
-    import uvicorn
+    from .cli import run as run_cli
 
-    services = LocalWebServiceManager()
-    previous_chat_debug = os.environ.get("SMART_DOC_TRACKER_CHAT_DEBUG")
-    try:
-        if arguments.chat_debug:
-            os.environ["SMART_DOC_TRACKER_CHAT_DEBUG"] = "1"
-        services.start()
-        uvicorn.run(
-            "smart_doc_tracker.web.app:create_app",
-            factory=True,
-            host=arguments.host,
-            port=arguments.port,
-            workers=1,
-            log_level=arguments.log_level,
-            access_log=arguments.access_log,
-        )
-    except LocalServiceStartupError as exc:
-        parser.exit(status=1, message=f"error: {exc}\n")
-    finally:
-        services.stop()
-        if arguments.chat_debug:
-            if previous_chat_debug is None:
-                os.environ.pop("SMART_DOC_TRACKER_CHAT_DEBUG", None)
-            else:
-                os.environ["SMART_DOC_TRACKER_CHAT_DEBUG"] = previous_chat_debug
-
-
-def _configure_application_logging(level: str) -> None:
-    """Send application progress and safe diagnostics to the server terminal."""
-    application_logger = logging.getLogger("smart_doc_tracker")
-    handler = logging.StreamHandler()
-    handler.setFormatter(
-        logging.Formatter(
-            "%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-            datefmt="%H:%M:%S",
-        )
-    )
-    application_logger.handlers.clear()
-    application_logger.addHandler(handler)
-    application_logger.setLevel(level.upper())
-    application_logger.propagate = False
+    run_cli(argv, service_manager_factory=LocalWebServiceManager)

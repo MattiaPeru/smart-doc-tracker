@@ -1159,14 +1159,6 @@ Source: [`src/smart_doc_tracker/web/app.py`](../../src/smart_doc_tracker/web/app
 
 FastAPI composition root for the loopback-only web dashboard.
 
-### `LocalStaticFiles(StaticFiles)`
-
-Serve local dashboard assets without retaining stale browser copies.
-
-Methods:
-
-- `async get_response(self, path: str, scope: Scope) -> Response` — Return one static asset with browser persistence disabled.
-
 ### `WebDependencies`
 
 Explicit local dependencies used by the FastAPI adapter.
@@ -1188,6 +1180,33 @@ Fields:
 - `create_app(dependencies: WebDependencies | None = None) -> FastAPI` — Create a testable local dashboard with injected application services.
 
 - `run(argv: Sequence[str] | None = None) -> None` — Run the dashboard and own its required local service lifecycle.
+
+## `smart_doc_tracker.web.chat`
+
+Source: [`src/smart_doc_tracker/web/chat.py`](../../src/smart_doc_tracker/web/chat.py)
+
+Coordinate cancellation and in-memory history for local document chat.
+
+### `ChatCancellation`
+
+Coordinate cancellation and conversation memory across chat worker threads.
+
+Methods:
+
+- `__init__(self, memory: TemporaryChatMemory) -> None` — Keep cancellation state tied to one process-local memory store.
+- `track(self, request_id: str | None, conversation_id: str | None) -> Iterator[Event]` — Track one request, including a cancellation received before it starts.
+- `cancel(self, request_id: str) -> None` — Cancel an active request or remember an early cancellation briefly.
+- `clear(self, conversation_id: str) -> None` — Cancel active requests and forget one conversation atomically.
+- `remember(self, conversation_id: str, cancelled: Event, turn: ConversationTurn) -> None` — Keep a completed exchange only if cancellation has not won the race.
+
+### `DocumentChatService`
+
+Answer document questions with local retrieval and bounded memory.
+
+Methods:
+
+- `__init__(self, vector_index: DocumentVectorIndex | None, generator: TextGenerator | None, pending_documents: PendingDocumentService, memory: TemporaryChatMemory, cancellation: ChatCancellation, debug: bool) -> None` — Bind local generation, conversation memory, and cancellation.
+- `answer(self, request: ChatRequest, repository: DocumentRepository) -> ChatResponse` — Return a grounded local answer and validated document references.
 
 ## `smart_doc_tracker.web.chat_memory`
 
@@ -1212,6 +1231,14 @@ Methods:
 - `remember(self, conversation_id: str, turn: ConversationTurn) -> None` — Append one completed exchange and enforce all memory bounds.
 - `clear(self, conversation_id: str) -> None` — Forget one conversation immediately.
 - `clear_all(self) -> None` — Forget every conversation, including during application shutdown.
+
+## `smart_doc_tracker.web.cli`
+
+Source: [`src/smart_doc_tracker/web/cli.py`](../../src/smart_doc_tracker/web/cli.py)
+
+Command-line startup for the loopback-only dashboard.
+
+- `run(argv: Sequence[str] | None = None, *, service_manager_factory: Callable[[], LocalWebServiceManager] = LocalWebServiceManager) -> None` — Run the dashboard and own its required local service lifecycle.
 
 ## `smart_doc_tracker.web.index_jobs`
 
@@ -1245,6 +1272,28 @@ Methods:
 - `submit(self, document_id: str) -> IndexUpdateJob` — Durably queue the latest stored version of one document.
 - `get(self, job_id: str) -> IndexUpdateJob | None` — Return one stable in-memory job snapshot.
 - `close(self) -> None` — Stop promptly and leave unfinished refreshes for the next start.
+
+## `smart_doc_tracker.web.insertion`
+
+Source: [`src/smart_doc_tracker/web/insertion.py`](../../src/smart_doc_tracker/web/insertion.py)
+
+Coordinate confirmed web insertions and recovery of local stores.
+
+### `PendingSourceRemovalError(OSError)`
+
+The staged source could not be removed after cancellation was recorded.
+
+### `PendingInsertionCoordinator`
+
+Complete confirmed insertions and retry recoverable local store failures.
+
+Methods:
+
+- `__init__(self, pending_documents: PendingDocumentService, jobs: UploadJobService, repository_factory: Callable[[], DocumentRepository], vector_index: DocumentVectorIndex | None, mutations: DocumentMutationPipeline | None, mutation_lock: Lock, insertion_lock: Lock, processed_path: Path) -> None` — Bind the local stores, job queue, and synchronization primitives.
+- `complete(self, pending_id: str) -> DocumentInsertResult` — Resume a confirmed insertion from its durable local manifest.
+- `retry_until_stopped(self) -> None` — Retry interrupted or unavailable local stores until shutdown.
+- `stop(self) -> None` — Signal the background recovery worker to stop.
+- `reject(self, pending_id: str) -> None` — Cancel partial store entries and discard a staged source atomically.
 
 ## `smart_doc_tracker.web.jobs`
 
@@ -1373,6 +1422,97 @@ Methods:
 - `restore_archive(self, item: PendingDocument, archived_path: Path) -> None` — Return a source to confirmation staging after a later failure.
 - `reject(self, pending_id: str) -> bool` — Discard one unconfirmed source and its local manifest.
 - `close(self) -> None` — Leave durable confirmation items available for the next start.
+
+## `smart_doc_tracker.web.routes.context`
+
+Source: [`src/smart_doc_tracker/web/routes/context.py`](../../src/smart_doc_tracker/web/routes/context.py)
+
+Explicit dependencies shared by local HTTP route groups.
+
+### `WebRouteDependencies(Protocol)`
+
+Read-only application dependencies needed by HTTP handlers.
+
+Methods:
+
+- `repository_factory(self) -> Callable[[], DocumentRepository]` — Return the local repository factory.
+- `today_provider(self) -> Callable[[], date]` — Return the injected local date provider.
+- `vector_index(self) -> DocumentVectorIndex | None` — Return the optional local vector index.
+- `processed_path(self) -> Path` — Return the local archive path.
+
+### `WebRouteContext`
+
+Application-scoped services passed to each route group.
+
+Fields:
+
+- `dependencies: WebRouteDependencies`
+- `reminder_settings: LocalReminderSettingsStore`
+- `pending_documents: PendingDocumentService`
+- `jobs: UploadJobService`
+- `upload_intake: UploadIntake`
+- `mutations: DocumentMutationPipeline | None`
+- `insertion: PendingInsertionCoordinator`
+- `index_jobs: DocumentIndexJobService | None`
+- `chat_service: DocumentChatService`
+- `chat_cancellation: ChatCancellation`
+- `templates: Jinja2Templates`
+- `csrf_token: str`
+
+Methods:
+
+- `repository(self) -> Iterator[DocumentRepository]` — Open and close one local repository for an HTTP request.
+- `default_reminder_days(self) -> int` — Return the configured reminder window or a safe service error.
+
+## `smart_doc_tracker.web.routes.document_chat`
+
+Source: [`src/smart_doc_tracker/web/routes/document_chat.py`](../../src/smart_doc_tracker/web/routes/document_chat.py)
+
+Local chat HTTP endpoints.
+
+- `register_document_chat_routes(context: WebRouteContext) -> APIRouter` — Register the chat endpoints with explicit local services.
+
+## `smart_doc_tracker.web.routes.documents`
+
+Source: [`src/smart_doc_tracker/web/routes/documents.py`](../../src/smart_doc_tracker/web/routes/documents.py)
+
+Local documents HTTP endpoints.
+
+- `register_documents_routes(context: WebRouteContext) -> APIRouter` — Register the documents endpoints with explicit local services.
+
+## `smart_doc_tracker.web.routes.helpers`
+
+Source: [`src/smart_doc_tracker/web/routes/helpers.py`](../../src/smart_doc_tracker/web/routes/helpers.py)
+
+Safe service checks shared by local document routes.
+
+- `require_mutation_service(service: DocumentMutationPipeline | None) -> DocumentMutationPipeline` — Return configured mutation coordination or a safe service error.
+
+- `require_index_jobs(service: DocumentIndexJobService | None) -> DocumentIndexJobService` — Return the configured local refresh queue or a safe service error.
+
+## `smart_doc_tracker.web.routes.pending_documents`
+
+Source: [`src/smart_doc_tracker/web/routes/pending_documents.py`](../../src/smart_doc_tracker/web/routes/pending_documents.py)
+
+Local pending HTTP endpoints.
+
+- `register_pending_document_routes(context: WebRouteContext) -> APIRouter` — Register the pending endpoints with explicit local services.
+
+## `smart_doc_tracker.web.routes.settings`
+
+Source: [`src/smart_doc_tracker/web/routes/settings.py`](../../src/smart_doc_tracker/web/routes/settings.py)
+
+Local settings HTTP endpoints.
+
+- `register_settings_routes(context: WebRouteContext) -> APIRouter` — Register the settings endpoints with explicit local services.
+
+## `smart_doc_tracker.web.routes.upload_jobs`
+
+Source: [`src/smart_doc_tracker/web/routes/upload_jobs.py`](../../src/smart_doc_tracker/web/routes/upload_jobs.py)
+
+Local uploads HTTP endpoints.
+
+- `register_upload_job_routes(context: WebRouteContext) -> APIRouter` — Register the uploads endpoints with explicit local services.
 
 ## `smart_doc_tracker.web.schemas`
 
@@ -1524,3 +1664,41 @@ Fields:
 Methods:
 
 - `from_fragments(cls, document_id: str, fragments: list[IndexedDocumentFragment]) -> DocumentIndexedContentResponse` — Create an HTTP response without exposing stored embeddings.
+
+## `smart_doc_tracker.web.security`
+
+Source: [`src/smart_doc_tracker/web/security.py`](../../src/smart_doc_tracker/web/security.py)
+
+Enforce loopback-only browser access and restrictive response policies.
+
+### `LocalStaticFiles(StaticFiles)`
+
+Serve local dashboard assets without retaining stale browser copies.
+
+Methods:
+
+- `async get_response(self, path: str, scope: Scope) -> Response` — Return one static asset with browser persistence disabled.
+
+### `LocalWebSecurity`
+
+Protect local routes from external hosts, cross-origin writes, and CSRF.
+
+Methods:
+
+- `__init__(self, csrf_token: str) -> None` — Require the given token on browser mutation requests.
+- `async enforce(self, request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response` — Validate request authority and apply browser policies to responses.
+
+## `smart_doc_tracker.web.upload`
+
+Source: [`src/smart_doc_tracker/web/upload.py`](../../src/smart_doc_tracker/web/upload.py)
+
+Validate and stage browser uploads for local document processing.
+
+### `UploadIntake`
+
+Spool a validated upload and transfer ownership to the local job queue.
+
+Methods:
+
+- `__init__(self, jobs: UploadJobService) -> None` — Transfer accepted local files to the upload job queue.
+- `async submit(self, file: UploadFile, language: str) -> UploadJobResponse` — Validate, spool, and queue one document for local processing.
