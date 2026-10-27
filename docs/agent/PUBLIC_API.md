@@ -368,7 +368,6 @@ Methods:
 - `set_source_file_name(self, document_id: str, source_file_name: str) -> StoredDocument | None` — Attach the safe processed-file name to one stored document.
 - `delete_document(self, document_id: str) -> StoredDocument | None` — Delete one document and its structured sections, returning its snapshot.
 - `get_expiring_documents(self, days_threshold: int, *, today: date | None = None) -> list[StoredDocument]` — Return documents expiring from today through the inclusive threshold.
-- `get_documents_expiring_in_year(self, year: int) -> list[StoredDocument]` — Return documents with an expiry date inside the requested calendar year.
 - `search_by_dynamic_field(self, field_key: str, field_value: Any) -> list[StoredDocument]` — Find documents by an exact value at a validated dynamic field path.
 
 ## `smart_doc_tracker.db.vector_database`
@@ -553,7 +552,6 @@ Methods:
 - `set_source_file_name(self, document_id: str, source_file_name: str) -> StoredDocument | None` — Attach one safe processed-file name to a stored document.
 - `delete_document(self, document_id: str) -> StoredDocument | None` — Delete one document and its local structured sections.
 - `get_expiring_documents(self, days_threshold: int, *, today: date | None = None) -> list[StoredDocument]` — Return documents expiring within an inclusive date window.
-- `get_documents_expiring_in_year(self, year: int) -> list[StoredDocument]` — Return documents whose normalized expiry date falls in one year.
 - `search_by_dynamic_field(self, field_key: str, field_value: Any) -> list[StoredDocument]` — Return documents matching an exact dynamic JSON field value.
 
 ## `smart_doc_tracker.interfaces.document_vector_index`
@@ -1060,44 +1058,6 @@ Fields:
 Methods:
 
 - `ask(self, question: str, *, limit: int = 5, history: Sequence[ConversationTurn] = ()) -> DocumentAnswer` — Answer a natural-language question using only retrieved local context.
-
-### `StructuredFieldRequest`
-
-One deterministic request for a validated structured document field.
-
-Fields:
-
-- `field_name: str`
-
-- `requested_structured_field(question: str) -> StructuredFieldRequest | None` — Recognize a factual question whose answer is stored as validated data.
-
-### `StructuredFieldQuestionPipeline`
-
-Answer factual field questions without allowing model-authored values.
-
-Fields:
-
-- `repository: DocumentRepository`
-- `vector_index: DocumentVectorIndex`
-
-Methods:
-
-- `ask(self, question: str, request: StructuredFieldRequest, *, limit: int = 5, history: Sequence[ConversationTurn] = ()) -> DocumentAnswer` — Read one validated repository value for the locally identified document.
-
-- `requested_expiry_year(question: str, *, today: date | None = None) -> int | None` — Return one unambiguous year from an expiry-related question.
-
-### `ExpirationYearQuestionPipeline`
-
-Answer calendar-year expiration questions from normalized stored dates.
-
-Fields:
-
-- `repository: DocumentRepository`
-- `today_provider: Callable[[], date] = date.today`
-
-Methods:
-
-- `ask(self, year: int) -> DocumentAnswer` — Return a deterministic answer for documents expiring in one year.
 
 ### `ExpirationCheckResult`
 

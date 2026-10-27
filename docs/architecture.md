@@ -250,41 +250,32 @@ text or the dynamic payload.
 
 ### Document-question sequence
 
-Calendar-year expiration questions deliberately bypass semantic retrieval and use
-normalized dates. Other questions follow the local retrieval-augmented generation
-path.
+All document questions, including expiration and structured-field questions, follow
+the local retrieval-augmented generation path.
 
 ```mermaid
 sequenceDiagram
     actor User as Local user
     participant Controller as RAG workflow controller
-    participant Repository as MongoDB repository
     participant Pipeline as Document question pipeline
     participant Index as Chroma vector index
     participant Ollama as Local Ollama
 
     User->>Controller: Ask a document question
-    Controller->>Controller: Detect an unambiguous expiry year
-    alt Calendar-year expiration question
-        Controller->>Repository: Query normalized expiry dates for year
-        Repository-->>Controller: Matching validated records
-        Controller->>Controller: Build deterministic answer
-    else General document question
-        Controller->>Pipeline: ask(question, limit)
-        Pipeline->>Index: Query nearest fragments
-        Index->>Ollama: Embed question locally
-        Ollama-->>Index: Query embedding
-        Index->>Index: Search local ChromaDB
-        Index-->>Pipeline: Ranked document fragments
-        alt Context is available
-            Pipeline->>Ollama: Generate answer from retrieved context only
-            Ollama-->>Pipeline: JSON answer candidate
-            Pipeline->>Pipeline: Validate schema and referenced document IDs
-        else No matching context
-            Pipeline->>Pipeline: Build deterministic insufficient-context answer
-        end
-        Pipeline-->>Controller: Grounded DocumentAnswer
+    Controller->>Pipeline: ask(question, limit)
+    Pipeline->>Index: Query nearest fragments
+    Index->>Ollama: Embed question locally
+    Ollama-->>Index: Query embedding
+    Index->>Index: Search local ChromaDB
+    Index-->>Pipeline: Ranked document fragments
+    alt Context is available
+        Pipeline->>Ollama: Generate answer from retrieved context only
+        Ollama-->>Pipeline: JSON answer candidate
+        Pipeline->>Pipeline: Validate schema and referenced document IDs
+    else No matching context
+        Pipeline->>Pipeline: Build deterministic insufficient-context answer
     end
+    Pipeline-->>Controller: Grounded DocumentAnswer
     Controller-->>User: Answer and supporting document IDs
 ```
 

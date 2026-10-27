@@ -8,11 +8,7 @@ from dataclasses import dataclass
 from ..cli.dependencies import CliDependencies
 from ..cli.serializer import JsonResultSerializer
 from ..core.parser import DocumentParsingError
-from ..db.database import (
-    DatabaseConfigurationError,
-    DatabaseError,
-    MongoDocumentRepository,
-)
+from ..db.database import DatabaseConfigurationError, DatabaseError
 from ..db.vector_database import (
     ChromaDocumentVectorIndex,
     VectorDatabaseError,
@@ -26,13 +22,7 @@ from ..infrastructure.ollama import (
     OllamaResponseError,
 )
 from ..interfaces.document_vector_index import DocumentVectorIndex
-from ..pipeline import (
-    DocumentQuestionPipeline,
-    ExpirationYearQuestionPipeline,
-    StructuredFieldQuestionPipeline,
-    requested_expiry_year,
-    requested_structured_field,
-)
+from ..pipeline import DocumentQuestionPipeline
 
 
 def create_document_vector_index(
@@ -60,53 +50,19 @@ class RagWorkflowController:
     def ask_documents(self, args: argparse.Namespace) -> int:
         """Answer one question from the local Chroma document index."""
         try:
-            expiry_year = requested_expiry_year(args.ask_documents)
-            structured_field = requested_structured_field(args.ask_documents)
-            if expiry_year is not None:
-                print(
-                    "[1/1] Querying normalized local expiration dates...",
-                    file=self.dependencies.stderr,
-                    flush=True,
-                )
-                create_repository = (
-                    self.dependencies.repository_factory
-                    or MongoDocumentRepository.connect
-                )
-                with create_repository() as repository:
-                    answer = ExpirationYearQuestionPipeline(repository).ask(expiry_year)
-            elif structured_field is not None:
-                print(
-                    "[1/1] Reading validated local document data...",
-                    file=self.dependencies.stderr,
-                    flush=True,
-                )
-                create_repository = (
-                    self.dependencies.repository_factory
-                    or MongoDocumentRepository.connect
-                )
-                with create_repository() as repository:
-                    answer = StructuredFieldQuestionPipeline(
-                        repository,
-                        create_document_vector_index(self.dependencies, args),
-                    ).ask(
-                        args.ask_documents,
-                        structured_field,
-                        limit=args.rag_results,
-                    )
-            else:
-                print(
-                    "[1/1] Searching indexed documents and generating "
-                    "a local answer...",
-                    file=self.dependencies.stderr,
-                    flush=True,
-                )
-                answer = DocumentQuestionPipeline(
-                    vector_index=create_document_vector_index(self.dependencies, args),
-                    generator=(
-                        self.dependencies.rag_generator
-                        or OllamaClient(base_url=args.ollama_url, model=args.model)
-                    ),
-                ).ask(args.ask_documents, limit=args.rag_results)
+            print(
+                "[1/1] Searching indexed documents and generating "
+                "a local answer...",
+                file=self.dependencies.stderr,
+                flush=True,
+            )
+            answer = DocumentQuestionPipeline(
+                vector_index=create_document_vector_index(self.dependencies, args),
+                generator=(
+                    self.dependencies.rag_generator
+                    or OllamaClient(base_url=args.ollama_url, model=args.model)
+                ),
+            ).ask(args.ask_documents, limit=args.rag_results)
         except DocumentParsingError as exc:
             print(f"Document question failed: {exc}", file=self.dependencies.stderr)
             if args.show_rag_validation_details:

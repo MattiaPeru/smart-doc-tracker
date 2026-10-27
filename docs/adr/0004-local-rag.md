@@ -21,8 +21,8 @@ vector dimensions. Retrieve a bounded number of fragments, treat their content a
 untrusted data, and ask a local Ollama generator for a validated `DocumentAnswer`.
 Reject answers that cite document IDs outside the retrieved context.
 
-Use deterministic MongoDB queries instead of RAG when a question can be safely
-recognized as a calendar-year expiration query.
+All document questions, including those about expiration dates and structured
+fields, use the same local retrieval and grounded generation path.
 
 The current web interface exposes indexed-content inspection but not the bounded
 question use case. A future dashboard question flow must link answers to existing
@@ -35,7 +35,7 @@ Benefits:
 - document content and questions stay on the host during normal use;
 - answers identify the records used as sources;
 - structured and unstructured content are both retrievable;
-- expiration questions can bypass probabilistic generation where appropriate.
+- document questions share one retrieval and validation path.
 
 Costs and limitations:
 

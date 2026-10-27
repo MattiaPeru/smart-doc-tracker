@@ -84,10 +84,6 @@ class DocumentRepository(Protocol):
         """Return documents expiring within an inclusive date window."""
         ...
 
-    def get_documents_expiring_in_year(self, year: int) -> list[StoredDocument]:
-        """Return documents whose normalized expiry date falls in one year."""
-        ...
-
     def search_by_dynamic_field(
         self, field_key: str, field_value: Any
     ) -> list[StoredDocument]:

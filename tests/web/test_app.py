@@ -76,14 +76,6 @@ class FakeRepository:
             return self.records[:1]
         return []
 
-    def get_documents_expiring_in_year(self, year: int) -> list[StoredDocument]:
-        return [
-            item
-            for item in self.records
-            if item.document.expiry_date is not None
-            and item.document.expiry_date.year == year
-        ]
-
     def insert_document(
         self,
         document: DocumentData,
@@ -221,10 +213,7 @@ class FakeVectorIndex:
 class FakeGenerator:
     def __init__(self) -> None:
         self.questions: list[str] = []
-
-    def generate(self, *, system_prompt: str, user_prompt: str) -> str:
-        self.questions.append(user_prompt)
-        return (
+        self.response = (
             '{"answer":"The policy indicates a local insurance record.",'
             '"claims":[{"claim":"The record is a local insurance policy",'
             '"evidence":[{"document_id":"expired",'
@@ -232,6 +221,10 @@ class FakeGenerator:
             '"source":"structured_document","page":null}]}],'
             '"document_ids":["expired"],"insufficient_information":false}'
         )
+
+    def generate(self, *, system_prompt: str, user_prompt: str) -> str:
+        self.questions.append(user_prompt)
+        return self.response
 
 
 class UnavailableGenerator:
@@ -435,10 +428,14 @@ class WebApplicationTests(TestCase):
         self.assertEqual(second.status_code, 200)
         self.assertEqual(separate.status_code, 200)
         previous_question = "When does my insurance policy expire?"
-        self.assertEqual(second.json()["answer"], "The issue date is 2026-01-01.")
+        self.assertEqual(
+            second.json()["answer"],
+            "The policy indicates a local insurance record.",
+        )
+        self.assertIn(previous_question, self.vector_index.queries[-2])
         self.assertNotIn(previous_question, self.vector_index.queries[-1])
         self.assertEqual(self.vector_index.queries[-1], "And who owns it?")
-        self.assertEqual(self.generator.questions, [])
+        self.assertEqual(len(self.generator.questions), 3)
 
     def test_new_conversation_endpoint_forgets_temporary_history(self) -> None:
         payload = {
@@ -459,7 +456,7 @@ class WebApplicationTests(TestCase):
         self.assertEqual(cleared.status_code, 204)
         self.assertEqual(follow_up.status_code, 200)
         self.assertEqual(self.vector_index.queries[-1], "And when was it issued?")
-        self.assertEqual(self.generator.questions, [])
+        self.assertEqual(len(self.generator.questions), 2)
 
     def test_reports_chat_failure_cause_without_logging_the_question(self) -> None:
         unavailable_app = create_app(
@@ -499,7 +496,19 @@ class WebApplicationTests(TestCase):
         self.assertIn("Chat request failed with OllamaConnectionError", log_output)
         self.assertNotIn("private diagnostic question", log_output)
 
-    def test_answers_expiry_year_chat_without_using_the_generator(self) -> None:
+    def test_answers_expiry_year_chat_with_grounded_retrieval(self) -> None:
+        self.vector_index.query_results = [
+            RetrievedDocumentChunk(
+                document_id="valid",
+                content="The policy expires on 2027-01-01.",
+                source="structured_document",
+                distance=0.1,
+            )
+        ]
+        self.generator.response = (
+            '{"claims":[{"claim":"The policy expires on 2027-01-01.",'
+            '"evidence_ids":["E1"]}]}'
+        )
         response = self.client.post(
             "/api/chat",
             json={"question": "Quali documenti scadono nel 2027?"},
@@ -507,7 +516,9 @@ class WebApplicationTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["documents"][0]["id"], "valid")
-        self.assertEqual(self.generator.questions, [])
+        self.assertEqual(response.json()["answer"], "The policy expires on 2027-01-01.")
+        self.assertEqual(self.vector_index.queries, ["Quali documenti scadono nel 2027?"])
+        self.assertEqual(len(self.generator.questions), 1)
 
     def test_dashboard_keeps_chat_and_document_preview_in_the_same_page(self) -> None:
         dashboard = self.client.get("/")

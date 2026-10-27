@@ -42,9 +42,6 @@ operator-visible failure behavior in the mutation pipeline.
 ```text
 question + optional process-local conversation ID
   -> bounded temporary history lookup
-  -> explicit expiry-year detection
-     -> DocumentRepository date query
-  OR
   -> DocumentQuestionPipeline
      -> contextual DocumentVectorIndex query
      -> previously cited local document fragments (follow-up questions only)
@@ -53,7 +50,8 @@ question + optional process-local conversation ID
   -> completed exchange retained in memory until cleared, expired, or shutdown
 ```
 
-Calendar-year expiry questions bypass vector retrieval. General answers may cite
+All document questions use the same local retrieval and grounded generation path,
+including questions about expiry dates and structured fields. Answers may cite
 only document identifiers present in the locally retrieved context. Temporary chat
 history is bounded, isolated by conversation ID, never persisted, and used only to
 resolve follow-up references; document context remains the sole factual evidence.

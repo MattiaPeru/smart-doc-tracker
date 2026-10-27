@@ -341,14 +341,6 @@ class MongoDocumentRepository:
         query = {"expiry_date": {"$gte": start, "$lt": end}}
         return self._find_documents(query)
 
-    def get_documents_expiring_in_year(self, year: int) -> list[StoredDocument]:
-        """Return documents with an expiry date inside the requested calendar year."""
-        if year < 1 or year >= date.max.year:
-            raise ValueError("year must be between 1 and 9998")
-        start = _date_to_datetime(date(year, 1, 1))
-        end = _date_to_datetime(date(year + 1, 1, 1))
-        return self._find_documents({"expiry_date": {"$gte": start, "$lt": end}})
-
     def search_by_dynamic_field(
         self, field_key: str, field_value: Any
     ) -> list[StoredDocument]:

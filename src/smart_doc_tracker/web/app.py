@@ -68,10 +68,6 @@ from ..pipeline import (
     DocumentProcessingPipeline,
     DocumentProcessingResult,
     DocumentQuestionPipeline,
-    ExpirationYearQuestionPipeline,
-    StructuredFieldQuestionPipeline,
-    requested_expiry_year,
-    requested_structured_field,
 )
 from ..settings import (
     LocalReminderSettingsStore,
@@ -550,40 +546,17 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
             if request.conversation_id is not None
             else ()
         )
-        expiry_year = requested_expiry_year(
-            question,
-            today=resolved.today_provider(),
-        )
-        structured_field = requested_structured_field(question)
         try:
-            if expiry_year is not None:
-                _LOGGER.info("Chat request is using the normalized expiry-date query.")
-                answer = ExpirationYearQuestionPipeline(
-                    repository,
-                    today_provider=resolved.today_provider,
-                ).ask(expiry_year)
-            elif structured_field is not None:
-                _LOGGER.info("Chat request is using a validated structured field.")
-                if resolved.vector_index is None:
-                    raise HTTPException(
-                        status_code=503,
-                        detail="The local document assistant is unavailable.",
-                    )
-                answer = StructuredFieldQuestionPipeline(
-                    repository,
-                    resolved.vector_index,
-                ).ask(question, structured_field, history=history)
-            else:
-                _LOGGER.info("Chat request is using semantic retrieval and Ollama.")
-                if resolved.vector_index is None or resolved.rag_generator is None:
-                    raise HTTPException(
-                        status_code=503,
-                        detail="The local document assistant is unavailable.",
-                    )
-                answer = DocumentQuestionPipeline(
-                    resolved.vector_index,
-                    resolved.rag_generator,
-                ).ask(question, history=history)
+            _LOGGER.info("Chat request is using semantic retrieval and Ollama.")
+            if resolved.vector_index is None or resolved.rag_generator is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="The local document assistant is unavailable.",
+                )
+            answer = DocumentQuestionPipeline(
+                resolved.vector_index,
+                resolved.rag_generator,
+            ).ask(question, history=history)
         except (
             DocumentParsingError,
             OllamaConfigurationError,
