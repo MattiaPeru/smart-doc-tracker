@@ -4,6 +4,7 @@ import time
 from datetime import UTC, date, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from threading import Event, Thread
 from typing import Any
 from unittest import TestCase
 
@@ -458,6 +459,122 @@ class WebApplicationTests(TestCase):
         self.assertEqual(self.vector_index.queries[-1], "And when was it issued?")
         self.assertEqual(len(self.generator.questions), 2)
 
+    def test_cancelling_active_chat_discards_answer_and_preserves_prior_history(
+        self,
+    ) -> None:
+        conversation_id = "conversation-with-cancelled-request"
+        self.assertEqual(
+            self.client.post(
+                "/api/chat",
+                json={"question": "First question", "conversation_id": conversation_id},
+            ).status_code,
+            200,
+        )
+        started = Event()
+        release = Event()
+        original_generate = self.generator.generate
+
+        def blocking_generate(*, system_prompt: str, user_prompt: str) -> str:
+            if "Cancelled question" in user_prompt:
+                started.set()
+                self.assertTrue(release.wait(5))
+            return original_generate(
+                system_prompt=system_prompt, user_prompt=user_prompt
+            )
+
+        self.generator.generate = blocking_generate
+        responses: list[Any] = []
+        request_id = "11111111-1111-4111-8111-111111111111"
+        worker = Thread(
+            target=lambda: responses.append(
+                self.client.post(
+                    "/api/chat",
+                    json={
+                        "question": "Cancelled question",
+                        "conversation_id": conversation_id,
+                        "request_id": request_id,
+                    },
+                )
+            )
+        )
+        worker.start()
+        try:
+            self.assertTrue(started.wait(5))
+            self.assertEqual(
+                self.client.delete(f"/api/chat/requests/{request_id}").status_code,
+                204,
+            )
+        finally:
+            release.set()
+            worker.join(5)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(responses[0].status_code, 409)
+        self.generator.generate = original_generate
+
+        follow_up = self.client.post(
+            "/api/chat",
+            json={"question": "Follow-up", "conversation_id": conversation_id},
+        )
+        self.assertEqual(follow_up.status_code, 200)
+        self.assertIn("First question", self.vector_index.queries[-1])
+        self.assertNotIn("Cancelled question", self.vector_index.queries[-1])
+
+    def test_clearing_conversation_cancels_its_active_request(self) -> None:
+        started = Event()
+        release = Event()
+        original_generate = self.generator.generate
+
+        def blocking_generate(*, system_prompt: str, user_prompt: str) -> str:
+            started.set()
+            self.assertTrue(release.wait(5))
+            return original_generate(
+                system_prompt=system_prompt, user_prompt=user_prompt
+            )
+
+        self.generator.generate = blocking_generate
+        responses: list[Any] = []
+        worker = Thread(
+            target=lambda: responses.append(
+                self.client.post(
+                    "/api/chat",
+                    json={
+                        "question": "Abandoned question",
+                        "conversation_id": "abandoned-conversation",
+                        "request_id": "22222222-2222-4222-8222-222222222222",
+                    },
+                )
+            )
+        )
+        worker.start()
+        try:
+            self.assertTrue(started.wait(5))
+            self.assertEqual(
+                self.client.delete(
+                    "/api/chat/conversations/abandoned-conversation"
+                ).status_code,
+                204,
+            )
+        finally:
+            release.set()
+            worker.join(5)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(responses[0].status_code, 409)
+
+    def test_cancellation_arriving_before_chat_request_skips_generation(self) -> None:
+        request_id = "33333333-3333-4333-8333-333333333333"
+        self.assertEqual(
+            self.client.delete(f"/api/chat/requests/{request_id}").status_code,
+            204,
+        )
+
+        response = self.client.post(
+            "/api/chat",
+            json={"question": "Never generated", "request_id": request_id},
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.generator.questions, [])
+
     def test_reports_chat_failure_cause_without_logging_the_question(self) -> None:
         unavailable_app = create_app(
             WebDependencies(
@@ -517,7 +634,9 @@ class WebApplicationTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["documents"][0]["id"], "valid")
         self.assertEqual(response.json()["answer"], "The policy expires on 2027-01-01.")
-        self.assertEqual(self.vector_index.queries, ["Quali documenti scadono nel 2027?"])
+        self.assertEqual(
+            self.vector_index.queries, ["Quali documenti scadono nel 2027?"]
+        )
         self.assertEqual(len(self.generator.questions), 1)
 
     def test_dashboard_keeps_chat_and_document_preview_in_the_same_page(self) -> None:
@@ -534,7 +653,11 @@ class WebApplicationTests(TestCase):
         self.assertIn("window.document.createElement", script.text)
         self.assertNotIn("documents.forEach((document)", script.text)
         self.assertIn('id="new-chat-button"', dashboard.text)
+        self.assertIn('id="cancel-chat-button"', dashboard.text)
         self.assertIn("conversation_id: conversationId", script.text)
+        self.assertIn("request_id: request.id", script.text)
+        self.assertIn("signal: request.controller.signal", script.text)
+        self.assertIn("cancelChatRequest(false);", script.text)
         self.assertIn("crypto.randomUUID()", script.text)
         chat_renderer = script.text.split("function appendChatMessage", 1)[1].split(
             "async function openChatDocument", 1

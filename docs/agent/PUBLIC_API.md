@@ -1386,6 +1386,7 @@ One bounded natural-language question for the local document assistant.
 Fields:
 
 - `question: str = Field(min_length=1, max_length=4000)`
+- `request_id: str | None = Field(default=None, pattern='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')`
 - `conversation_id: str | None = Field(default=None, min_length=1, max_length=64, pattern='^[A-Za-z0-9_-]+$')`
 
 ### `ChatDocumentReference(BaseModel)`

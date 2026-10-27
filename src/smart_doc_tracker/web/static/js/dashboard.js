@@ -10,6 +10,7 @@ const dialog = document.querySelector("#document-dialog");
 const reviewDialog = document.querySelector("#review-dialog");
 const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
 let conversationId = crypto.randomUUID();
+let activeChatRequest = null;
 let defaultReminderDays = 30;
 
 function apiFetch(resource, options = {}) {
@@ -480,29 +481,59 @@ async function openChatDocument(documentId) {
   }
 }
 
-document.querySelector("#chat-form").addEventListener("submit", async (event) => {
+const chatForm = document.querySelector("#chat-form");
+const cancelChatButton = document.querySelector("#cancel-chat-button");
+const chatSubmitButton = chatForm.querySelector('button[type="submit"]');
+
+function setChatRequestBusy(busy) {
+  chatSubmitButton.disabled = busy;
+  chatSubmitButton.classList.toggle("is-saving", busy);
+  chatSubmitButton.textContent = busy ? "Thinking..." : "Send";
+  cancelChatButton.hidden = !busy;
+}
+
+function cancelChatRequest(showNotice = true) {
+  const request = activeChatRequest;
+  if (!request) return;
+  activeChatRequest = null;
+  request.controller.abort();
+  apiFetch(`/api/chat/requests/${request.id}`, { method: "DELETE" }).catch(() => {
+    // The browser has already discarded the response if the local service is unavailable.
+  });
+  request.pending.remove();
+  if (showNotice) appendChatMessage("assistant", "Request cancelled.");
+  setChatRequestBusy(false);
+}
+
+cancelChatButton.addEventListener("click", () => {
+  cancelChatRequest();
+  chatForm.querySelector("#chat-question").focus();
+});
+
+chatForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   const questionInput = form.querySelector("#chat-question");
-  const submitButton = form.querySelector('button[type="submit"]');
   const question = questionInput.value.trim();
-  if (!question) return;
+  if (!question || activeChatRequest) return;
   appendChatMessage("user", question);
   questionInput.value = "";
-  submitButton.disabled = true;
-  submitButton.classList.add("is-saving");
-  submitButton.textContent = "Thinking...";
   const pending = appendChatMessage("assistant", "Searching your local documents...");
+  const request = { id: crypto.randomUUID(), controller: new AbortController(), pending };
+  activeChatRequest = request;
+  setChatRequestBusy(true);
   try {
     const response = await apiFetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question, conversation_id: conversationId }),
+      body: JSON.stringify({ question, conversation_id: conversationId, request_id: request.id }),
+      signal: request.controller.signal,
     });
     if (!response.ok) {
       throw requestError(response, "The local document assistant couldn't answer right now.");
     }
     const payload = await response.json();
+    if (activeChatRequest !== request || request.controller.signal.aborted) return;
     pending.remove();
     appendChatMessage(
       "assistant",
@@ -511,23 +542,28 @@ document.querySelector("#chat-form").addEventListener("submit", async (event) =>
       payload.insufficient_information,
     );
   } catch (error) {
+    if (activeChatRequest !== request || request.controller.signal.aborted) return;
     pending.remove();
     appendChatMessage("assistant", userMessage(error, "The local document assistant couldn't answer right now."));
   } finally {
-    submitButton.disabled = false;
-    submitButton.classList.remove("is-saving");
-    submitButton.textContent = "Send";
-    questionInput.focus();
+    if (activeChatRequest === request) {
+      activeChatRequest = null;
+      setChatRequestBusy(false);
+      questionInput.focus();
+    }
   }
 });
 
 document.querySelector("#new-chat-button").addEventListener("click", async () => {
+  cancelChatRequest(false);
   const previousConversationId = conversationId;
   conversationId = crypto.randomUUID();
   const messages = document.querySelector("#chat-messages");
   const welcome = messages.querySelector("[data-chat-welcome]").cloneNode(true);
   messages.replaceChildren(welcome);
-  document.querySelector("#chat-question").focus();
+  const questionInput = document.querySelector("#chat-question");
+  questionInput.value = "";
+  questionInput.focus();
   try {
     await apiFetch(`/api/chat/conversations/${previousConversationId}`, {
       method: "DELETE",

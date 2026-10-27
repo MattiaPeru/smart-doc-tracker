@@ -166,7 +166,7 @@ button.compact { padding: 6px 10px; }
 .chat-source:hover { color: white; }
 .chat-insufficient { display: block; margin-top: 10px; color: var(--danger); font-size: .82rem; }
 .chat-form { border-top: 1px solid var(--line); padding-top: 16px; }
-.chat-composer { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; }
+.chat-composer { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: end; }
 .chat-composer textarea { min-height: 58px; max-height: 160px; }
 
 .document-card {

@@ -7,8 +7,9 @@ import os
 import re
 import secrets
 import tempfile
+from collections import OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -128,6 +129,66 @@ class LocalStaticFiles(StaticFiles):
         return response
 
 
+class _ChatCancellation:
+    """Coordinate cancellation and conversation memory across chat worker threads."""
+
+    def __init__(self, memory: TemporaryChatMemory) -> None:
+        self._memory = memory
+        self._lock = Lock()
+        self._active: dict[str, tuple[str | None, Event]] = {}
+        self._cancelled: OrderedDict[str, None] = OrderedDict()
+
+    @contextmanager
+    def track(
+        self, request_id: str | None, conversation_id: str | None
+    ) -> Iterator[Event]:
+        """Track one request, including a cancellation received before it starts."""
+        cancelled = Event()
+        if request_id is not None:
+            with self._lock:
+                if request_id in self._cancelled:
+                    cancelled.set()
+                    del self._cancelled[request_id]
+                self._active[request_id] = (conversation_id, cancelled)
+        try:
+            yield cancelled
+        finally:
+            if request_id is not None:
+                with self._lock:
+                    self._active.pop(request_id, None)
+
+    def cancel(self, request_id: str) -> None:
+        """Cancel an active request or remember an early cancellation briefly."""
+        with self._lock:
+            active = self._active.get(request_id)
+            if active is not None:
+                active[1].set()
+            else:
+                self._cancelled[request_id] = None
+                if len(self._cancelled) > 1000:
+                    self._cancelled.popitem(last=False)
+
+    def clear(self, conversation_id: str) -> None:
+        """Cancel active requests and forget one conversation atomically."""
+        with self._lock:
+            for active_conversation_id, cancelled in self._active.values():
+                if active_conversation_id == conversation_id:
+                    cancelled.set()
+            self._memory.clear(conversation_id)
+
+    def remember(
+        self,
+        conversation_id: str,
+        cancelled: Event,
+        turn: ConversationTurn,
+    ) -> None:
+        """Keep a completed exchange only if cancellation has not won the race."""
+        with self._lock:
+            if cancelled.is_set():
+                raise HTTPException(status_code=409, detail="Chat request cancelled.")
+            self._memory.remember(conversation_id, turn)
+
+
 @dataclass(frozen=True, slots=True)
 class WebDependencies:
     """Explicit local dependencies used by the FastAPI adapter."""
@@ -184,6 +245,7 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
     """Create a testable local dashboard with injected application services."""
     resolved = dependencies or default_web_dependencies()
     chat_memory = resolved.chat_memory or TemporaryChatMemory()
+    chat_cancellation = _ChatCancellation(chat_memory)
     data_path = resolved.processed_path.parent
     reminder_settings = resolved.reminder_settings or LocalReminderSettingsStore(
         data_path / "settings.json"
@@ -540,63 +602,79 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
                 status_code=503,
                 detail="A document is still being inserted. Please try again shortly.",
             )
-        _LOGGER.info("Chat request accepted; document contents are not logged.")
-        history = (
-            chat_memory.history(request.conversation_id)
-            if request.conversation_id is not None
-            else ()
-        )
-        try:
-            _LOGGER.info("Chat request is using semantic retrieval and Ollama.")
-            if resolved.vector_index is None or resolved.rag_generator is None:
+        with chat_cancellation.track(
+            request.request_id, request.conversation_id
+        ) as cancelled:
+            if cancelled.is_set():
+                raise HTTPException(status_code=409, detail="Chat request cancelled.")
+            _LOGGER.info("Chat request accepted; document contents are not logged.")
+            history = (
+                chat_memory.history(request.conversation_id)
+                if request.conversation_id is not None
+                else ()
+            )
+            try:
+                _LOGGER.info("Chat request is using semantic retrieval and Ollama.")
+                if resolved.vector_index is None or resolved.rag_generator is None:
+                    raise HTTPException(
+                        status_code=503,
+                        detail="The local document assistant is unavailable.",
+                    )
+                answer = DocumentQuestionPipeline(
+                    resolved.vector_index,
+                    resolved.rag_generator,
+                ).ask(question, history=history)
+            except (
+                DocumentParsingError,
+                OllamaConfigurationError,
+                OllamaConnectionError,
+                OllamaResponseError,
+                VectorDatabaseError,
+            ) as exc:
+                _LOGGER.error("Chat request failed with %s.", type(exc).__name__)
                 raise HTTPException(
                     status_code=503,
-                    detail="The local document assistant is unavailable.",
-                )
-            answer = DocumentQuestionPipeline(
-                resolved.vector_index,
-                resolved.rag_generator,
-            ).ask(question, history=history)
-        except (
-            DocumentParsingError,
-            OllamaConfigurationError,
-            OllamaConnectionError,
-            OllamaResponseError,
-            VectorDatabaseError,
-        ) as exc:
-            _LOGGER.error(
-                "Chat request failed with %s.",
-                type(exc).__name__,
-            )
-            raise HTTPException(
-                status_code=503,
-                detail=_chat_error_detail(exc),
-            ) from exc
+                    detail=_chat_error_detail(exc),
+                ) from exc
+            if cancelled.is_set():
+                raise HTTPException(status_code=409, detail="Chat request cancelled.")
 
-        documents: list[ChatDocumentReference] = []
-        for document_id in dict.fromkeys(answer.document_ids):
-            record = repository.get_document_by_id(document_id)
-            if record is not None:
-                documents.append(ChatDocumentReference.from_record(record))
-        _LOGGER.info(
-            "Chat request completed successfully (%s supporting documents).",
-            len(documents),
-        )
-        if request.conversation_id is not None:
-            chat_memory.remember(
-                request.conversation_id,
-                ConversationTurn(
-                    question=question,
-                    answer=answer.answer,
-                    document_ids=tuple(answer.document_ids),
-                ),
+            documents: list[ChatDocumentReference] = []
+            for document_id in dict.fromkeys(answer.document_ids):
+                record = repository.get_document_by_id(document_id)
+                if record is not None:
+                    documents.append(ChatDocumentReference.from_record(record))
+            _LOGGER.info(
+                "Chat request completed successfully (%s supporting documents).",
+                len(documents),
             )
-        return ChatResponse(
-            answer=answer.answer,
-            claims=answer.claims,
-            documents=documents,
-            insufficient_information=answer.insufficient_information,
-        )
+            if request.conversation_id is not None:
+                chat_cancellation.remember(
+                    request.conversation_id,
+                    cancelled,
+                    ConversationTurn(
+                        question=question,
+                        answer=answer.answer,
+                        document_ids=tuple(answer.document_ids),
+                    ),
+                )
+            return ChatResponse(
+                answer=answer.answer,
+                claims=answer.claims,
+                documents=documents,
+                insufficient_information=answer.insufficient_information,
+            )
+
+    @app.delete("/api/chat/requests/{request_id}", status_code=204)
+    def cancel_chat_request(request_id: str) -> Response:
+        """Discard an active or not-yet-started local chat answer."""
+        if not re.fullmatch(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+            request_id,
+        ):
+            raise HTTPException(status_code=422, detail="Invalid request identifier.")
+        chat_cancellation.cancel(request_id)
+        return Response(status_code=204)
 
     @app.delete("/api/chat/conversations/{conversation_id}", status_code=204)
     def clear_chat_conversation(conversation_id: str) -> Response:
@@ -606,7 +684,7 @@ def create_app(dependencies: WebDependencies | None = None) -> FastAPI:
                 status_code=422,
                 detail="Invalid conversation identifier.",
             )
-        chat_memory.clear(conversation_id)
+        chat_cancellation.clear(conversation_id)
         return Response(status_code=204)
 
     @app.get("/api/documents/{document_id}", response_model=DocumentResponse)
