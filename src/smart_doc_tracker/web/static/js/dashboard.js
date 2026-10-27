@@ -121,7 +121,7 @@ function renderQueue(items) {
   if (!items.length) queueGrid.innerHTML = '<p class="empty">No documents are waiting to be processed.</p>';
 }
 
-function showDetail(item, loadContent = false) {
+function showDetail(item) {
   const detail = document.querySelector("#document-detail");
   detail.innerHTML = `<p class="eyebrow">${escapeHtml(expirationLabel(item))}</p>
     <h2>${escapeHtml(item.document_type.replaceAll("_", " "))}</h2>
@@ -151,9 +151,6 @@ function showDetail(item, loadContent = false) {
   });
   detail.querySelector("#delete-document").addEventListener("click", () => deleteDocument(item.id));
   dialog.showModal();
-  if (loadContent && item.original_file_name) {
-    window.open(`/api/documents/${encodeURIComponent(item.id)}/original`, "_blank", "noopener");
-  }
 }
 
 function showEditor(item, mode) {
@@ -477,7 +474,7 @@ async function openChatDocument(documentId) {
   try {
     const response = await apiFetch(`/api/documents/${documentId}`);
     if (!response.ok) throw requestError(response, "We couldn't open this document.");
-    showDetail(await response.json(), true);
+    showDetail(await response.json());
   } catch (error) {
     showMessage(userMessage(error, "We couldn't open this document."), true);
   }
